@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+
+# Secrets
+.env
+
+# Generated / downloaded
+work/
+models/
+assets/fonts/
+
+# Media (never commit videos)
+samples/*
+!samples/.gitkeep
+*.mp4
+*.mov
+*.mkv
+*.webm
+*.avi
+*.wav
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
