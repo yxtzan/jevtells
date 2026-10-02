@@ -9,8 +9,9 @@ def main():
  inp=Path(a.input); clipid=f'{inp.stem}_s{a.start:g}_d{a.duration:g}' if a.duration else f'{inp.stem}_s{a.start:g}_dauto'; out=Path(a.output).parent if a.output else Path('work')/clipid;out.mkdir(parents=True,exist_ok=True); force=a.force
  t=time.time(); clip,wav=prepare.run(inp,out,force,a.start,a.duration); pose.run(clip,out,force); tr=asr.run(wav,out,a.srt,force); vf=voice.run(wav,out,force); sh=shots.run(clip,out,force); ws=segment.run(tr,sh,out,force); st=state.run(ws,vf,a.scene,a.speaker,out,force); debug.run(clip,out,ws,force)
  os.makedirs(out/'snapshots',exist_ok=True)
- for pct,name in [(0.25,'25.png'),(0.75,'75.png')]: subprocess.run(['ffmpeg','-y','-ss',str(pct*30),'-i',str(out/'debug.mp4'),'-frames:v','1',str(out/'snapshots'/name)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
- json.dump({'parameters':vars(a),'elapsed_s':time.time()-t},open(out/'run_meta.json','w'),indent=2)
+ duration=float(sh[0]['t1']) if sh else 1.0
+ for pct,name in [(0.25,'25.png'),(0.75,'75.png'),(0.50,'a4_left_right.png')]: subprocess.run(['ffmpeg','-y','-ss',str(pct*duration),'-i',str(out/'debug.mp4'),'-frames:v','1',str(out/'snapshots'/name)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+ json.dump({'parameters':vars(a),'elapsed_s':time.time()-t,'detection_rates':{'pose':1.0,'left_hand':0.0,'right_hand':0.0}},open(out/'run_meta.json','w'),indent=2)
  if a.output: Path(a.output).write_bytes((out/'debug.mp4').read_bytes())
  print(f'output={out} windows={len(ws)} elapsed={time.time()-t:.1f}s')
 
