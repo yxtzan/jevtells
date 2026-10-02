@@ -4,7 +4,7 @@
 >
 > 上传一段说话人视频，得到一段标注了手势、意图和 Jev 判定的视频。
 
-**Status: work in progress — not usable yet.** Install and usage instructions will land with v0.1.0.
+**Status: v0.1.0 — data layer only.** The tool currently extracts subtitles, body and hand keypoints, voice features and a per-window state, and renders a debug video. Gesture labels (v0.2), Jev judgments (v0.3) and the final annotated video (v0.4) are in progress.
 
 ## How it works
 
@@ -18,7 +18,53 @@
 | One-line narration and key quote | any LLM via OpenRouter | API |
 | Annotated output video | Pillow + ffmpeg | locally |
 
-The only key you need is an OpenRouter API key.
+The only key you need is an OpenRouter API key (from v0.3).
+
+## Requirements
+
+- macOS (tested on Apple Silicon) or Linux
+- Python 3.11
+- ffmpeg **with libx264**
+  - macOS: install [Homebrew](https://brew.sh), then `brew install ffmpeg`
+  - Ubuntu / Debian: `sudo apt install ffmpeg`
+  - Check: `ffmpeg -hide_banner -encoders | grep libx264` should print a line
+- About 2 GB of disk space for Python packages and models
+
+## Install
+
+```bash
+git clone https://github.com/yxtzan/jevtells.git
+cd jevtells
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+pip install -e .
+python scripts/download_models.py
+```
+
+The speech-to-text model downloads automatically on the first run.
+
+## Usage (v0.1.0)
+
+```bash
+jevtells run path/to/video.mp4 --speaker "Speaker name" --until state
+```
+
+Results go to `work/<clip_id>/`: `transcript.json`, `keypoints.npz`, `windows.json`, `states.json`, `debug.mp4` and more.
+
+| Option | Meaning |
+|---|---|
+| `--start`, `--duration` | Analyse only part of the video (seconds) |
+| `--srt FILE` | Use your own subtitles instead of automatic transcription |
+| `--force` | Recompute every stage (otherwise cached results are reused) |
+| `--from STAGE`, `--until STAGE` | Run only part of the pipeline |
+
+A 30-second clip takes about one minute on an Apple M4 MacBook Air.
+
+## Troubleshooting
+
+- **`Could not create an NSOpenGLPixelFormat`** (MediaPipe) or **VideoToolbox error `-12903`** (encoding): you are running inside a sandbox without GPU access, typically an AI coding agent. Run the command from a normal terminal.
+- **`libx264` not found**: your ffmpeg is a minimal build. Install it with Homebrew or apt as above.
 
 ## Disclaimer
 

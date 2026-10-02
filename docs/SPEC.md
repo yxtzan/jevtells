@@ -29,7 +29,8 @@
 ```
 input.mp4
  ├─ [prepare]  ffmpeg 截取片段，统一格式 → clip.mp4, audio.wav(16k mono)      本地
- ├─ [pose]     MediaPipe 逐帧检测身体+双手 → keypoints.npz                    本地
+ ├─ [pose]     MediaPipe 逐帧检测画面中所有人、所有手 → detections.npz          本地
+ ├─ [track]    按 --target 锁定主角并逐帧跟踪，分配左右手 → keypoints.npz        本地
  ├─ [asr]      faster-whisper 转写（或 --srt 导入）→ transcript.json          本地
  ├─ [voice]    librosa 提取音量/音高 → voice_features.json                    本地
  ├─ [shots]    镜头切分 + 目标人是否在画面 → shots.json                        本地
@@ -45,6 +46,8 @@ input.mp4
 **缓存原则**：每个阶段只读上游文件、只写自己的文件，全部放在 `work/<clip_id>/`。文件已存在就跳过；`--force` 全部重跑，`--from <stage>` 从某阶段起重跑，`--until <stage>` 跑到某阶段停。这样调渲染时不用重跑识别，也不会重复花 API 费用。
 
 `clip_id` = `<输入文件名>_s<start>_d<duration>`，例如 `interview_s0_d30`。
+
+`pose` 只做检测（最耗时），`track` 只做选人和跟踪（几秒）。把两者分开，是为了让用户换 `--target` 时不必重跑 MediaPipe。
 
 ## 4. 目录结构
 
@@ -82,22 +85,46 @@ jevtells/
 ## 5. 外部依赖与已知坑（必读）
 
 - **环境**：Python 3.11（推荐）；系统 ffmpeg（macOS：`brew install ffmpeg`）。
-- **MediaPipe**：用 Tasks API 的 `PoseLandmarker` 和 `HandLandmarker`，`VIDEO` 运行模式。模型文件由 `scripts/download_models.py` 下载到 `models/`。具体 API 以当前官方文档为准，实现前先核对。
+- **MediaPipe**：用 Tasks API 的 `PoseLandmarker` 和 `HandLandmarker`，`VIDEO` 运行模式，**必须显式设置 `delegate=BaseOptions.Delegate.CPU`**（不依赖显卡，服务器和虚拟机上也能跑）。模型文件由 `scripts/download_models.py` 下载到 `models/`。
+- **沙箱环境（macOS）**：AI 编码工具的沙箱通常禁止访问显卡，会导致 `Could not create an NSOpenGLPixelFormat`（MediaPipe）或 VideoToolbox `-12903`（编码）。这不是代码问题，需要在普通终端或沙箱外运行。README 的「常见问题」要写明。
+- **像素坐标**：MediaPipe 输出的 x、y 分别按画面宽、高归一化，比例不同。**所有距离、速度、角度计算前，先换算成像素坐标**（x×宽，y×高），再以肩宽（像素）归一化。
+- **可见度**：pose 关键点的 `visibility` 低于阈值（config，默认 0.5）时，视为不可见：不参与动作计算，调试视频里也不画。
 - **OpenCV 版本冲突**：mediapipe 依赖 `opencv-contrib-python`。**不要**再额外安装 `opencv-python`；安装 `scenedetect` 时**不要**带 `[opencv]` extra，否则两个 OpenCV 包会互相覆盖。
-- **左右手判定**：HandLandmarker 的 handedness 标签是按镜像（自拍）画面算的，普通视频里会反。**不要用 handedness 判断左右**。做法：把每只检测到的手的 wrist 点（hand 第 0 点）与 Pose 的 15 号（左腕）、16 号（右腕）做最近距离匹配，得到**说话人自己的**左右手。画面上「左手」一律指说话人的左手（通常出现在画面右侧）。
-- **视频编码**：不要用 `cv2.VideoWriter` 的 mp4v。把 RGB 帧通过管道交给 ffmpeg 编码（`libx264`、`yuv420p`、`crf 18`），再把原音轨 mux 回去，保证所有播放器和社交平台都能播放。
+- **左右手判定**：HandLandmarker 的 handedness 标签是按镜像（自拍）画面算的，普通视频里会反。**不要用 handedness 判断左右**。做法：把检测到的手的 wrist 点（hand 第 0 点）与主角 Pose 的 15 号（左腕）、16 号（右腕）匹配，得到**说话人自己的**左右手。有两只候选手时，两种配法都算一遍，取总距离更小的；距离超过阈值（肩宽倍数，config）的手丢弃（多半是别人的手）。画面上「左手」一律指说话人的左手（通常出现在画面右侧）。
+- **视频编码**：不要用 `cv2.VideoWriter` 的 mp4v。把 RGB 帧通过管道交给 ffmpeg 编码，再把原音轨 mux 回去。编码器按顺序自动选择：`libx264`（`yuv420p`、`crf 18`）→ `h264_videotoolbox`（macOS）→ `mpeg4`（几乎所有 ffmpeg 都有，画质较差，打印警告并建议安装带 libx264 的 ffmpeg）。实际使用的编码器写进 `run_meta.json`。
 - **时间戳**：VIDEO 模式要求 `timestamp_ms` 单调递增，用 `帧号 / fps` 计算，不要用系统时间。
 - **关键点抖动**：`keypoints.npz` 存原始值。平滑（One-Euro 或 EMA）在使用时做，参数放 config。
 - **numpy 版本**：可能被 mediapipe 限制，以实际能装上的版本为准，并锁进 requirements.txt。
 - **prepare 统一格式**：长边超过 1920 时缩到 1920；转成恒定帧率，保留原 fps，但上限为 30（参数放 config）。音频另存 16 kHz 单声道 wav。片段比 `--duration` 短时以实际长度为准。
 - **转写**：faster-whisper，CPU + int8。默认模型 `small`，config 可改为 `medium` / `large-v3-turbo`。语言默认自动检测，可在 config 中指定。开启词级时间戳。传了 `--srt` 时跳过转写，直接导入（导入的字幕没有词级时间，按字符数在句内均分估算）。
-- **多人画面**：PoseLandmarker 设 `num_poses=2`，目标说话人取逐帧外接框最大者，并用帧间中心距离做简单跟踪，防止跳到另一个人身上。
+- **多人画面**：见 §5.1。v1 只完整分析一个主角；不再用「画面里最大的人」自动选主角（M1 测试中因此锁到了旁边的主持人）。
+
+### 5.1 主角选择与跟踪
+
+原则：**宁可不标，也不标错人。**
+
+1. **`jevtells people INPUT [--at 秒]`**：在指定时刻（默认第一个检测到人的帧）截一帧，给每个人画框和大号编号（按框中心从左到右编为 1、2、3…），保存为 `work/<clip_id>/people.png`，同时在终端打印编号列表。
+2. **`--target`**：`jevtells run … --target 2` 表示以 `people.png` 那一帧的 2 号为主角。也可以写多个锚点，如 `--target 2@0 --target 1@18.5`，表示 0 秒起跟 2 号、18.5 秒起改跟 1 号（编号以该时刻 `people --at 18.5` 的截图为准），用于处理剪辑切换。第一个锚点同时向前、向后跟踪。没传 `--target` 时，若锚点帧只有一个人就选他，否则报错并提示先运行 `people`。
+3. **逐帧跟踪**：候选人与上一帧主角外接框的 IoU ≥ 阈值则匹配；否则取中心距离在「肩宽 × 倍数」以内、且框面积比在合理范围内的最近者；都不满足则该帧记为「主角缺失」。
+4. **跟丢后找回**：连续缺失后，只有当候选人的外观（躯干区域 HSV 颜色直方图）与丢失前足够相似、且大小接近时才找回；否则保持缺失，直到下一个锚点。
+5. 所有阈值放 config；跟踪结果（每帧是否有主角、何时找回）写进 `run_meta.json`。
+6. 调试视频：所有被检测到的人画浅灰色细框，主角画高亮框并标 `TARGET`，缺失时左上角显示 `target=lost`。
 
 ## 6. 数据格式
 
 所有 JSON 都要有对应的 pydantic 模型（`schemas.py`），写文件前先校验。时间单位一律为秒（float）。
 
-### 6.1 keypoints.npz
+### 6.1 detections.npz 与 keypoints.npz
+
+`detections.npz`（pose 阶段）：每帧所有人、所有手，不做选择。
+
+| 键 | 形状 / 类型 | 说明 |
+|---|---|---|
+| `fps`, `width`, `height`, `n_frames`, `t` | | 同下 |
+| `poses_all` | `[T,K,33,4]` | K = config 中最大人数（默认 4），不足补 NaN |
+| `hands_all` | `[T,M,21,3]` | M = config 中最大手数（默认 4），不足补 NaN |
+
+`keypoints.npz`（track 阶段）：只含主角。
 
 | 键 | 形状 / 类型 | 说明 |
 |---|---|---|
@@ -118,7 +145,7 @@ jevtells/
 
 ### 6.3 voice_features.json
 
-逐帧（hop 0.05 s）：`t`、`rms_db`、`f0_hz`（无声为 null）。另存全片基线：`baseline_rms_db`（中位数）、`baseline_f0_hz`（中位数）。
+逐帧（hop 0.05 s）：`t`、`rms_db`、`f0_hz`（无声为 null）。另存全片基线：`baseline_rms_db`（中位数）、`baseline_f0_hz`（中位数）。音高用 `librosa.pyin`（带有声 / 无声判定），不要用 `yin`（它对静音也会输出数值）。
 
 ### 6.4 shots.json
 
@@ -161,6 +188,7 @@ jevtells/
 ```
 
 - `voice` 和 `measured_actions` 是**用模板从数值生成的描述文字**，不调用 LLM。数值分档的阈值放 config。
+- `voice` 必须包含四项：相对全片基线的音量（dB）、音调起伏（有声帧音高的半音标准差，分 low / medium / high 三档）、语速（窗口内词数 ÷ 有词时长，词/秒）、停顿（窗口内无词时长占比，分 few / some / many 三档）。
 - 发给 Jev 的 state 和问题一律用**英文**（更稳定）；字幕保持原语言；界面显示时再按 `--lang` 翻译。
 - `scene` 来自 `--scene` 参数；没传则在 M3 由视觉模型生成一次（可选）；M1 先填 `"unknown"`。
 
@@ -186,7 +214,15 @@ jevtells/
 
 ## 7. 动作词表（M2 实现，此处先定义）
 
-所有位移、距离都以**肩宽**归一化，并以肩中心为原点。阈值全部放在 config，用测试片段调。效果差的类型可以先删掉，最少保留 8 种。
+所有位移、距离都在像素坐标下计算，再以**肩宽**归一化，并以肩中心为原点。阈值全部放在 config，用测试片段调。效果差的类型可以先删掉，最少保留 8 种。
+
+实现要点：
+
+- **平滑**：离线处理，用零相位滤波（如 Savitzky–Golay），不要用会产生延迟的单向滤波。5 帧以内的缺口先插值，更长的缺口把轨迹断开，不跨缺口计算。
+- **动作 vs 姿势**：同一状态（如握拳、张掌）持续超过阈值时长（config，默认 3 秒），视为「姿势」而不是「动作」，不产生事件。典型例子：一直握着麦克风的手。
+- **事件合并**：同一肢体、同一类型、时间重叠或间隔很短的事件合并为一个。
+- **数量上限**：每个窗口最多保留 N 个事件（config，默认 4），按幅度从大到小取，保证 state 简洁。
+- **幅度分档**：small / medium / large，阈值放 config。
 
 | type | 中文显示 | 判定要点 |
 |---|---|---|
@@ -243,7 +279,10 @@ jevtells/
 ## 11. 命令行
 
 ```
+jevtells people INPUT.mp4 [--at SECONDS] [--start 0] [--duration 30]
+
 jevtells run INPUT.mp4 [-o OUT.mp4] [--start 0] [--duration 30]
+         [--target N | --target N@SECONDS ...]
          [--lang zh|en] [--speaker NAME] [--scene TEXT] [--srt FILE]
          [--until STAGE] [--from STAGE] [--force] [--config PATH]
 ```
