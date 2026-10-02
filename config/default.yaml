@@ -1,0 +1,5 @@
+max_fps: 30
+max_width: 1920
+min_window: 2.0
+max_window: 5.0
+scene: unknown
