@@ -1,5 +1,79 @@
+# Video and window defaults
 max_fps: 30
 max_width: 1920
 min_window: 2.0
 max_window: 5.0
 scene: unknown
+
+video:
+  max_fps: 30
+  max_width: 1920
+
+models:
+  whisper: small
+  pose: pose_landmarker_full.task
+  hands: hand_landmarker.task
+
+detection:
+  max_people: 4
+  max_hands: 4
+  pose_visibility_threshold: 0.5
+  hand_match_max_shoulder_width: 0.75
+
+tracking:
+  iou_threshold: 0.20
+  max_center_distance_shoulder_width: 2.0
+  area_ratio_min: 0.50
+  area_ratio_max: 2.00
+  appearance_similarity: 0.70
+  appearance_size_ratio_min: 0.50
+  appearance_size_ratio_max: 2.00
+
+windows:
+  min_seconds: 2.0
+  max_seconds: 5.0
+
+voice:
+  sample_rate: 16000
+  hop_seconds: 0.05
+  f0_min_hz: 65.0
+  f0_max_hz: 500.0
+  frame_length: 2048
+  pitch_low_semitones: 1.5
+  pitch_high_semitones: 4.0
+  pauses_few_max_ratio: 0.20
+  pauses_many_min_ratio: 0.50
+
+smoothing:
+  enabled: true
+  window_length: 7
+  polyorder: 2
+  max_gap_frames: 5
+
+actions:
+  pose_visibility_threshold: 0.5
+  min_action_duration: 0.20
+  movement_threshold: 0.12
+  state_threshold: 0.65
+  posture_seconds: 3.0
+  max_per_window: 4
+  merge_gap_seconds: 0.20
+  small_threshold: 0.15
+  large_threshold: 0.35
+
+shots:
+  target_presence_ratio: 0.50
+  min_target_height_ratio: 0.25
+
+colour:
+  target: '#00E5FF'
+  other: '#A0A7B4'
+  text: '#FFFFFF'
+  background: '#121212'
+
+# US spelling is kept as an alias for callers that use colour/colour settings.
+colors:
+  target: '#00E5FF'
+  other: '#A0A7B4'
+  text: '#FFFFFF'
+  background: '#121212'

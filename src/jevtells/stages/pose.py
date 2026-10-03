@@ -1,13 +1,13 @@
-"""MediaPipe pose and hand landmark extraction."""
+"""MediaPipe CPU pose and hand detection (all people, no target selection)."""
+
+from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import cv2
 import mediapipe as mp
 import numpy as np
-
-from ..utils.geometry import match_hands_to_pose
 
 
 def _landmarks_to_array(landmarks: Any, width: int = 3) -> np.ndarray:
@@ -23,44 +23,31 @@ def _landmarks_to_array(landmarks: Any, width: int = 3) -> np.ndarray:
     return values
 
 
-def _choose_pose(poses: list[np.ndarray], previous: np.ndarray | None) -> np.ndarray:
-    """Choose the largest pose, then track it by nearest center."""
-    if not poses:
-        return np.full((33, 4), np.nan, dtype=np.float32)
-    boxes = []
-    for pose in poses:
-        points = pose[:, :2]
-        finite = points[np.isfinite(points).all(axis=1)]
-        boxes.append((float(np.ptp(finite[:, 0]) * np.ptp(finite[:, 1])) if len(finite) else 0.0, finite.mean(axis=0) if len(finite) else np.array([0.5, 0.5])))
-    if previous is None or not np.isfinite(previous[:, :2]).any():
-        return poses[int(np.argmax([box[0] for box in boxes]))]
-    old_points = previous[:, :2]
-    old_points = old_points[np.isfinite(old_points).all(axis=1)]
-    old_center = old_points.mean(axis=0) if len(old_points) else np.array([0.5, 0.5])
-    return min(poses, key=lambda pose: float(np.linalg.norm(_pose_center(pose) - old_center)))
+def run(clip: Path, out: Path, force: bool = False, model_dir: Path | None = None, config: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Detect every person and hand into ``detections.npz``.
 
-
-def _pose_center(pose: np.ndarray) -> np.ndarray:
-    """Return the center of finite pose points."""
-    points = pose[:, :2]
-    points = points[np.isfinite(points).all(axis=1)]
-    return points.mean(axis=0) if len(points) else np.array([0.5, 0.5])
-
-
-def run(clip: Path, out: Path, force: bool = False, model_dir: Path | None = None) -> dict[str, Any]:
-    """Extract real pose and hand landmarks into keypoints.npz."""
-    destination = out / "keypoints.npz"
+    This stage intentionally performs no target choice. ``track.run`` reads
+    this cache and can therefore be rerun with different ``--target`` anchors
+    without another MediaPipe pass.
+    """
+    destination = out / "detections.npz"
     if destination.exists() and not force:
-        return dict(np.load(destination, allow_pickle=False))
+        with np.load(destination, allow_pickle=False) as loaded:
+            return {key: loaded[key] for key in loaded.files}
+    settings = dict(config or {})
+    detection = settings.get("detection", {}) if isinstance(settings.get("detection", {}), Mapping) else {}
+    models = settings.get("models", {}) if isinstance(settings.get("models", {}), Mapping) else {}
+    max_people = int(detection.get("max_people", settings.get("max_people", 4)))
+    max_hands = int(detection.get("max_hands", settings.get("max_hands", 4)))
     root = model_dir or Path(__file__).resolve().parents[3] / "models"
-    pose_model = root / "pose_landmarker_full.task"
-    hand_model = root / "hand_landmarker.task"
+    pose_model = root / str(models.get("pose", settings.get("pose_model", "pose_landmarker_full.task")))
+    hand_model = root / str(models.get("hands", settings.get("hand_model", "hand_landmarker.task")))
     if not pose_model.exists() or not hand_model.exists():
         raise FileNotFoundError(f"MediaPipe models missing: {pose_model}, {hand_model}; run scripts/download_models.py")
     base = mp.tasks.BaseOptions
     running = mp.tasks.vision.RunningMode.VIDEO
-    pose_options = mp.tasks.vision.PoseLandmarkerOptions(base_options=base(model_asset_path=str(pose_model), delegate=base.Delegate.CPU), running_mode=running, num_poses=2)
-    hand_options = mp.tasks.vision.HandLandmarkerOptions(base_options=base(model_asset_path=str(hand_model), delegate=base.Delegate.CPU), running_mode=running, num_hands=2)
+    pose_options = mp.tasks.vision.PoseLandmarkerOptions(base_options=base(model_asset_path=str(pose_model), delegate=base.Delegate.CPU), running_mode=running, num_poses=max_people)
+    hand_options = mp.tasks.vision.HandLandmarkerOptions(base_options=base(model_asset_path=str(hand_model), delegate=base.Delegate.CPU), running_mode=running, num_hands=max_hands)
     pose_detector = mp.tasks.vision.PoseLandmarker.create_from_options(pose_options)
     hand_detector = mp.tasks.vision.HandLandmarker.create_from_options(hand_options)
     capture = cv2.VideoCapture(str(clip))
@@ -69,9 +56,6 @@ def run(clip: Path, out: Path, force: bool = False, model_dir: Path | None = Non
     height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
     poses: list[np.ndarray] = []
     hands: list[np.ndarray] = []
-    pose_present: list[bool] = []
-    hand_present: list[list[bool]] = []
-    previous: np.ndarray | None = None
     frame_index = 0
     while True:
         ok, frame = capture.read()
@@ -81,29 +65,28 @@ def run(clip: Path, out: Path, force: bool = False, model_dir: Path | None = Non
         image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         pose_result = pose_detector.detect_for_video(image, timestamp)
         hand_result = hand_detector.detect_for_video(image, timestamp)
-        candidates = [_landmarks_to_array(item, 4) for item in pose_result.pose_landmarks]
-        selected = _choose_pose(candidates, previous)
-        previous = selected
-        pose_wrist = selected
-        hand_candidates = [_landmarks_to_array(item, 3) for item in hand_result.hand_landmarks]
-        wrist_points = np.array([item[0] for item in hand_candidates], dtype=np.float32) if hand_candidates else np.empty((0, 3), dtype=np.float32)
-        sides = match_hands_to_pose(wrist_points, pose_wrist)
-        shoulder_width = float(np.linalg.norm(selected[11, :2] - selected[12, :2])) if np.isfinite(selected[11, :2]).all() and np.isfinite(selected[12, :2]).all() else 0.0
-        hand_frame = np.full((2, 21, 3), np.nan, dtype=np.float32)
-        present = [False, False]
-        for hand_index, side in enumerate(sides):
-            if side < 0 or shoulder_width <= 0:
-                continue
-            anchor = selected[15 + side, :2]
-            if float(np.linalg.norm(wrist_points[hand_index, :2] - anchor)) <= 0.75 * shoulder_width:
-                hand_frame[side] = hand_candidates[hand_index]
-                present[side] = True
-        poses.append(selected)
+        pose_frame = np.full((max_people, 33, 4), np.nan, dtype=np.float32)
+        for index, landmark_list in enumerate(list(pose_result.pose_landmarks)[:max_people]):
+            pose_frame[index] = _landmarks_to_array(landmark_list, 4)
+        hand_frame = np.full((max_hands, 21, 3), np.nan, dtype=np.float32)
+        for index, landmark_list in enumerate(list(hand_result.hand_landmarks)[:max_hands]):
+            hand_frame[index] = _landmarks_to_array(landmark_list, 3)
+        poses.append(pose_frame)
         hands.append(hand_frame)
-        pose_present.append(bool(np.isfinite(selected).any()))
-        hand_present.append(present)
         frame_index += 1
     capture.release()
-    data = {"fps": fps, "width": width, "height": height, "n_frames": len(poses), "t": np.arange(len(poses)) / fps, "pose": np.asarray(poses), "hands": np.asarray(hands), "pose_present": np.asarray(pose_present), "hand_present": np.asarray(hand_present)}
+    data: dict[str, Any] = {
+        "fps": float(fps),
+        "width": int(width),
+        "height": int(height),
+        "n_frames": len(poses),
+        "t": np.arange(len(poses), dtype=float) / float(fps),
+        "poses_all": np.asarray(poses, dtype=np.float32),
+        "hands_all": np.asarray(hands, dtype=np.float32),
+    }
+    out.mkdir(parents=True, exist_ok=True)
     np.savez(destination, **data)
     return data
+
+
+__all__ = ["run"]
