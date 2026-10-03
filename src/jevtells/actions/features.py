@@ -78,7 +78,7 @@ def _finger_features(hand_px: np.ndarray, side: int = 0) -> tuple[float, np.ndar
     MediaPipe's image landmarks use x/y image coordinates and a z value in
     the same normalised image scale as x.  The caller scales all three axes
     before this function.  The cross product of the index and pinky MCP
-    vectors gives an oriented palm normal; the right hand is flipped so the
+    vectors gives an oriented palm normal; the left hand is flipped so the
     same physical palm direction has the same sign for both sides.
     """
     values = np.asarray(hand_px, dtype=float)
