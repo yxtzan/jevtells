@@ -72,9 +72,16 @@ def _safe_norm(vector: np.ndarray, axis: int = -1) -> np.ndarray:
     return np.linalg.norm(np.asarray(vector, dtype=float), axis=axis)
 
 
-def _finger_features(hand: np.ndarray) -> tuple[float, np.ndarray, float, float, float]:
-    """Return openness, finger flags, palm-up cosine, spread and vertical cosine."""
-    values = np.asarray(hand, dtype=float)
+def _finger_features(hand_px: np.ndarray, side: int = 0) -> tuple[float, np.ndarray, float, float, float]:
+    """Return hand shape features from pixel-scaled 3-D landmarks.
+
+    MediaPipe's image landmarks use x/y image coordinates and a z value in
+    the same normalised image scale as x.  The caller scales all three axes
+    before this function.  The cross product of the index and pinky MCP
+    vectors gives an oriented palm normal; the right hand is flipped so the
+    same physical palm direction has the same sign for both sides.
+    """
+    values = np.asarray(hand_px, dtype=float)
     if values.shape != (21, 3) or not np.isfinite(values[:, :2]).all():
         return np.nan, np.full(5, np.nan), np.nan, np.nan, np.nan
     xy = values[:, :2]
@@ -93,16 +100,19 @@ def _finger_features(hand: np.ndarray) -> tuple[float, np.ndarray, float, float,
         straight.append(float(tip_distance > pip_distance * 1.15))
     openness = float(np.nanmean(straight)) if straight else np.nan
     spread = float(np.nanmean(lengths)) if lengths else np.nan
-    if np.isfinite(xy[[0, 5, 9, 17]]).all():
-        # The in-image palm normal is a conservative proxy for the direction
-        # of the palm.  It is normalised to a cosine so rules can reject the
-        # many open hands whose palm is facing the camera rather than upward.
-        across = xy[17] - xy[5]
-        norm = float(np.linalg.norm(across))
-        if norm > 0:
-            normal = np.asarray([-across[1], across[0]], dtype=float) / norm
-            up = np.asarray([0.0, -1.0])
-            palm_up = float(abs(np.dot(normal, up)))
+    if np.isfinite(values[[0, 5, 9, 17], :3]).all():
+        index_vector = values[5, :3] - values[0, :3]
+        pinky_vector = values[17, :3] - values[0, :3]
+        normal = np.cross(index_vector, pinky_vector)
+        normal_norm = float(np.linalg.norm(normal))
+        if normal_norm > 0:
+            # Landmark order produces opposite normals for anatomical left
+            # and right hands, so orient the right-hand normal once here.
+            if int(side) == 1:
+                normal = -normal
+            normal /= normal_norm
+            screen_up = np.asarray([0.0, -1.0, 0.0])
+            palm_up = float(np.dot(normal, screen_up))
         else:
             palm_up = np.nan
         finger = xy[9] - xy[0]
@@ -168,10 +178,14 @@ def extract_features(points: Mapping[str, Any], config: Mapping[str, Any] | None
         wrist_velocity[1:] = np.diff(wrist_px, axis=0) * fps
     wrist_norm = (wrist_px - shoulder_center[:, None, :]) / shoulder_width[:, None, None]
     wrist_norm[~np.isfinite(wrist_norm)] = np.nan
-    if hands.ndim == 4 and hands.shape[1] >= 2:
-        hands_px = _pixels(hands[:, :2, :, :2], width, height)
+    if hands.ndim == 4 and hands.shape[1] >= 2 and hands.shape[3] >= 3:
+        hands_px = np.asarray(hands[:, :2, :, :3], dtype=float).copy()
+        hands_px[..., 0] *= width
+        hands_px[..., 1] *= height
+        # MediaPipe image-landmark z uses the x scale.
+        hands_px[..., 2] *= width
     else:
-        hands_px = np.full((len(pose), 2, 21, 2), np.nan)
+        hands_px = np.full((len(pose), 2, 21, 3), np.nan)
     open_score = np.full((len(pose), 2), np.nan)
     finger_straight = np.full((len(pose), 2, 5), np.nan)
     palm_orientation = np.full((len(pose), 2), np.nan)
@@ -183,7 +197,8 @@ def extract_features(points: Mapping[str, Any], config: Mapping[str, Any] | None
             raw_hand = hands[frame, side] if hands.ndim == 4 and hands.shape[1] > side else np.full((21, 3), np.nan)
             present = np.isfinite(raw_hand[:, :2]).all(axis=1) if raw_hand.ndim == 2 and len(raw_hand) else np.zeros(21, dtype=bool)
             hand_point_ratio[frame, side] = float(np.mean(present)) if len(present) else 0.0
-            opened, straight, palm, spread, vertical_cos = _finger_features(raw_hand)
+            hand_geometry = hands_px[frame, side] if frame < len(hands_px) else np.full((21, 3), np.nan)
+            opened, straight, palm, spread, vertical_cos = _finger_features(hand_geometry, side=side)
             open_score[frame, side] = opened
             finger_straight[frame, side] = straight
             palm_orientation[frame, side] = palm

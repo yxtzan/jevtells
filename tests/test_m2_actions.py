@@ -124,11 +124,14 @@ def test_motion_events_require_visible_in_frame_wrist():
     t = np.arange(12) / 10.0
     wrists = np.zeros((12, 2, 2), dtype=float)
     wrists[:, 0, 1] = np.linspace(0.8, 0.2, 12)
-    features = {"t": t, "fps": 10.0, "wrist_norm": wrists, **_motion_quality(12)}
-    assert any(event["type"] == "raise" for event in detect_actions(features))
-    features["wrist_visibility"][4, 0] = 0.5
-    features["wrist_edge_ok"][4, 0] = False
-    assert not any(event["type"] == "raise" for event in detect_actions(features))
+    baseline = {"t": t, "fps": 10.0, "wrist_norm": wrists, **_motion_quality(12)}
+    assert any(event["type"] == "raise" for event in detect_actions(baseline))
+    low_visibility = {key: np.array(value, copy=True) if isinstance(value, np.ndarray) else value for key, value in baseline.items()}
+    low_visibility["wrist_visibility"][4, 0] = 0.5
+    assert not any(event["type"] == "raise" for event in detect_actions(low_visibility))
+    at_edge = {key: np.array(value, copy=True) if isinstance(value, np.ndarray) else value for key, value in baseline.items()}
+    at_edge["wrist_edge_ok"][4, 0] = False
+    assert not any(event["type"] == "raise" for event in detect_actions(at_edge))
 
 
 def test_occupied_hand_only_keeps_large_motion_and_drops_hand_shape():
@@ -141,6 +144,12 @@ def test_occupied_hand_only_keeps_large_motion_and_drops_hand_shape():
     events = detect_actions(features)
     assert not any(event["type"] in {"open_palm", "fist", "point", "palms_up"} and event["side"] == "left hand" for event in events)
     assert any(event["type"] == "raise" and event["magnitude"] == "large" for event in events)
+    for displacement in (0.20, 0.40):
+        candidate = {key: np.array(value, copy=True) if isinstance(value, np.ndarray) else value for key, value in features.items()}
+        candidate["wrist_norm"][:, 0, 1] = 0.8
+        candidate["wrist_norm"][2:7, 0, 1] = np.linspace(0.8, 0.8 - displacement, 5)
+        candidate["wrist_norm"][7:, 0, 1] = 0.8 - displacement
+        assert not any(event["type"] in {"raise", "press_down"} for event in detect_actions(candidate))
 
 
 def test_posture_ratio_filters_flickering_state():
@@ -159,6 +168,46 @@ def test_palms_up_requires_orientation_angle_and_below_chin():
         candidate = {name: np.array(item, copy=True) if isinstance(item, np.ndarray) else item for name, item in base.items()}
         candidate[key][:, 0] = value
         assert not any(event["type"] == "palms_up" and event["side"] == "left hand" for event in detect_actions(candidate))
+
+
+def _synthetic_hand(palm_sign: float) -> np.ndarray:
+    hand = np.zeros((21, 3), dtype=float)
+    hand[:] = [0.4, 0.4, 0.0]
+    hand[5] = [0.5, 0.4, 0.0]
+    hand[9] = [0.6, 0.4, 0.0]
+    hand[17] = [0.4, 0.4, palm_sign * 0.1]
+    return hand
+
+
+def _raw_feature_points(hand: np.ndarray, frames: int = 8) -> dict[str, np.ndarray | float]:
+    pose = np.stack([_person(0.5, 0.4, width=0.3) for _ in range(frames)])
+    pose[:, 0, :2] = [0.5, 0.2]
+    pose[:, 11, :2] = [0.35, 0.5]
+    pose[:, 12, :2] = [0.65, 0.5]
+    pose[:, 15, :2] = [0.42, 0.8]
+    pose[:, 16, :2] = [0.58, 0.8]
+    hands = np.full((frames, 2, 21, 3), np.nan, dtype=float)
+    hands[:, 0] = hand
+    return {"pose": pose, "hands": hands, "t": np.arange(frames) / 10.0, "fps": 10.0, "width": 1600.0, "height": 900.0}
+
+
+def test_extract_features_detects_occupied_hand_from_raw_points():
+    points = _raw_feature_points(_synthetic_hand(1.0), frames=30)
+    pose = np.asarray(points["pose"])
+    pose[:, 15, :2] = pose[:, 0, :2]  # left wrist stays at the nose
+    pose[:, 16, :2] = [0.8, 0.8]  # right wrist stays far away
+    features = extract_features({**points, "pose": pose})
+    assert features["occupied_mask"][:, 0].all()
+    assert not features["occupied_mask"][:, 1].any()
+
+
+def test_extract_features_palms_up_uses_signed_3d_normal_and_pixels():
+    up = extract_features(_raw_feature_points(_synthetic_hand(1.0)))
+    down = extract_features(_raw_feature_points(_synthetic_hand(-1.0)))
+    assert np.all(up["palm_up_score"][:, 0] >= 0.99)
+    assert np.all(down["palm_up_score"][:, 0] <= -0.99)
+    assert any(event["type"] == "palms_up" for event in detect_actions(up))
+    assert not any(event["type"] == "palms_up" for event in detect_actions(down))
 
 
 def test_overlapping_hand_shapes_keep_highest_priority_and_no_magnitude():

@@ -19,6 +19,7 @@ DEFAULT_RULE_CONFIG: dict[str, Any] = {
     "occupied_window_seconds": 10.0,
     "occupied_face_radius": 1.0,
     "occupied_ratio": 0.60,
+    "occupied_event_ratio": 0.50,
     "posture_window": 5.0,
     "posture_ratio": 0.70,
     "min_action_duration": 0.2,
@@ -31,6 +32,7 @@ DEFAULT_RULE_CONFIG: dict[str, Any] = {
     "palms_up_min_score": 0.50,
     "palms_up_max_vertical_cos": 0.70710678,
     "palms_up_min_nose_offset": 0.30,
+    "hand_point_frame_ratio": 1.0,
     "lean_in": {"enabled": False},
 }
 
@@ -118,15 +120,17 @@ def _hand_shape_valid(features: Mapping[str, Any], times: np.ndarray, event: Map
     if ratios.ndim != 2 or not len(indices):
         return True
     required = float(settings["hand_detection_ratio"])
-    return all(side < ratios.shape[1] and float(np.mean(ratios[indices, side] >= 1.0)) >= required for side in _sides(event))
+    frame_threshold = float(settings["hand_point_frame_ratio"])
+    return all(side < ratios.shape[1] and float(np.mean(ratios[indices, side] >= frame_threshold)) >= required for side in _sides(event))
 
 
-def _occupied(features: Mapping[str, Any], times: np.ndarray, event: Mapping[str, Any]) -> bool:
+def _occupied(features: Mapping[str, Any], times: np.ndarray, event: Mapping[str, Any], settings: Mapping[str, Any]) -> bool:
     values = np.asarray(features.get("occupied_mask", []), dtype=bool)
     indices = _span(times, float(event["t0"]), float(event["t1"]))
     if values.ndim != 2 or not len(indices):
         return False
-    return any(side < values.shape[1] and float(np.mean(values[indices, side])) >= 0.5 for side in _sides(event))
+    required = float(settings["occupied_event_ratio"])
+    return any(side < values.shape[1] and float(np.mean(values[indices, side])) >= required for side in _sides(event))
 
 
 def _posture_mask(mask: np.ndarray, times: np.ndarray, settings: Mapping[str, Any]) -> np.ndarray:
@@ -294,10 +298,19 @@ def _merge(events: Sequence[dict[str, Any]], settings: Mapping[str, Any]) -> lis
     return merged
 
 
-def _filter_occupied(events: Sequence[dict[str, Any]], features: Mapping[str, Any], times: np.ndarray) -> list[dict[str, Any]]:
+def _filter_shape_quality(events: Sequence[dict[str, Any]], features: Mapping[str, Any], times: np.ndarray, settings: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Recheck hand-point coverage over the final merged event span."""
+    return [
+        event
+        for event in events
+        if event["type"] not in SHAPE_TYPES or _hand_shape_valid(features, times, event, settings)
+    ]
+
+
+def _filter_occupied(events: Sequence[dict[str, Any]], features: Mapping[str, Any], times: np.ndarray, settings: Mapping[str, Any]) -> list[dict[str, Any]]:
     filtered: list[dict[str, Any]] = []
     for event in events:
-        if not _occupied(features, times, event):
+        if not _occupied(features, times, event, settings):
             filtered.append(event)
             continue
         if event["type"] in SHAPE_TYPES:
@@ -323,14 +336,15 @@ def detect_actions(features: Mapping[str, Any], windows: Sequence[Mapping[str, A
             delta = shoulder - np.nanmedian(shoulder)
             for start, end in _runs(delta > float(settings["movement_threshold"]), times, float(settings["min_action_duration"])):
                 events.append(_event("lean_in", "upper body", times[start], times[end], float(np.nanmax(delta[start : end + 1])), {"shoulder_width_change": float(np.nanmax(delta[start : end + 1]))}, settings))
-    events = _filter_occupied(events, features, times)
+    events = _filter_occupied(events, features, times, settings)
     events = _resolve_shape_conflicts(events)
     events = _merge(events, settings)
+    events = _filter_shape_quality(events, features, times, settings)
     if windows:
         limited: list[dict[str, Any]] = []
         for window in windows:
             inside = [item for item in events if float(window["t0"]) <= item["tmid"] <= float(window["t1"])]
-            inside.sort(key=lambda item: (3 if item["type"] in SHAPE_TYPES else 0) + {"large": 2, "medium": 1, "small": 0, None: 0}.get(item.get("magnitude"), 0), reverse=True)
+            inside.sort(key=lambda item: {"large": 2, "medium": 1, "small": 0, None: 0}.get(item.get("magnitude"), 0), reverse=True)
             limited.extend(inside[: int(settings["max_per_window"])])
         events = sorted(limited, key=lambda item: item["tmid"])
     for index, item in enumerate(events, start=1):

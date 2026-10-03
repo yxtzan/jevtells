@@ -58,6 +58,7 @@ actions:
   occupied_window_seconds: 10.0
   occupied_face_radius: 1.0
   occupied_ratio: 0.60
+  occupied_event_ratio: 0.50
   posture_window: 5.0
   posture_ratio: 0.70
   min_action_duration: 0.20
@@ -70,6 +71,7 @@ actions:
   palms_up_min_score: 0.50
   palms_up_max_vertical_cos: 0.70710678
   palms_up_min_nose_offset: 0.30
+  hand_point_frame_ratio: 1.0
 
 lean_in:
   enabled: false
