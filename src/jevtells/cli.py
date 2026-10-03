@@ -170,7 +170,7 @@ def _people_command(arguments: argparse.Namespace) -> None:
     records = _invoke(people.run, clip, output, at=arguments.at, detections=detections, force=arguments.force, config=config)
     for record in records:
         print(f"{record['number']}: detector_index={record['detector_index']} box={record['box']} t={record['time']:.2f}s")
-    print(f"people={output / 'people.png'}")
+    print(f"people={output / f'people_{arguments.at:04.1f}s.png'}")
 
 
 def main() -> None:
@@ -224,6 +224,7 @@ def main() -> None:
         records = _invoke(people.run, clip, output, at=0.0, detections=detections, force=arguments.force, config=config)
         for record in records:
             print(f"{record['number']}: detector_index={record['detector_index']} box={record['box']} t={record['time']:.2f}s")
+        print(f"people={output / 'people_00.0s.png'}")
         return
 
     stage_start = time.perf_counter()
@@ -272,7 +273,7 @@ def main() -> None:
         _snapshot(output / "debug.mp4", snapshots, duration * 0.25, "25.png")
         _snapshot(output / "debug.mp4", snapshots, duration * 0.75, "75.png")
         _snapshot(output / "debug.mp4", snapshots, duration * 0.50, "a4_left_right.png")
-    metadata: dict[str, Any] = {"parameters": vars(arguments), "elapsed_s": time.perf_counter() - started, "stage_times_s": stage_times, "encoding": encoding, "language": transcript.get("language"), "target_anchors": anchors, "duration_s": duration}
+    metadata: dict[str, Any] = {"parameters": vars(arguments), "elapsed_s": time.perf_counter() - started, "stage_times_s": stage_times, "encoding": encoding, "language": transcript.get("language"), "target_anchors": anchors, "duration_s": duration, "occupied_hands": actions_result.get("occupied_hands", {}) if isinstance(actions_result, Mapping) else {}}
     (output / "run_meta.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
     if arguments.output:
         Path(arguments.output).write_bytes((output / "debug.mp4").read_bytes())

@@ -17,7 +17,7 @@ import cv2
 import numpy as np
 
 from ..actions.features import extract_features
-from ..actions.rules import detect_actions
+from ..actions.rules import SHAPE_TYPES, detect_actions
 
 
 _LIMB_NAMES = {
@@ -42,20 +42,9 @@ def _settings(config: Mapping[str, Any] | None) -> dict[str, Any]:
         value = root.get(section, {})
         if isinstance(value, Mapping):
             result.update(value)
-    aliases = {
-        "posture_seconds": "posture_max_duration",
-        "max_per_window": "max_events_per_window",
-        "merge_gap_seconds": "merge_gap",
-        "small_threshold": "small_magnitude",
-        "large_threshold": "large_magnitude",
-        "pose_visibility_threshold": "visibility_threshold",
-    }
-    for source, target in aliases.items():
-        if source in result:
-            result[target] = result[source]
-    for key in ("min_action_duration", "movement_threshold", "state_threshold", "visibility_threshold"):
-        if key in root:
-            result[key] = root[key]
+    lean_in = root.get("lean_in")
+    if isinstance(lean_in, Mapping):
+        result["lean_in"] = dict(lean_in)
     result.setdefault("interpolation_max_gap", result.get("max_gap_frames", 5))
     result.setdefault("smoothing_window", result.get("window_length", 7))
     result.setdefault("smoothing_polynomial", result.get("polyorder", 2))
@@ -97,13 +86,15 @@ def _normalise_event(event: Mapping[str, Any], windows: Sequence[Mapping[str, An
         except (KeyError, TypeError, ValueError):
             continue
     params = _json_value(event.get("params", {}))
+    event_type = str(event.get("type", "gesture"))
+    magnitude = None if event_type in SHAPE_TYPES else event.get("magnitude", event.get("amplitude", "small"))
     return {
         "id": str(event.get("id") or f"A{fallback_id:03d}"),
         "t0": t0,
         "t1": t1,
         "limb": limb,
-        "type": str(event.get("type", "gesture")),
-        "magnitude": str(event.get("magnitude", event.get("amplitude", "small"))),
+        "type": event_type,
+        "magnitude": magnitude,
         "params": params if isinstance(params, Mapping) else {},
         "anchor": str(event.get("anchor", anchor)),
         "window": window_id,
@@ -231,7 +222,7 @@ def _review_image(
     cv2.imwrite(str(output), canvas)
 
 
-def _summary(events: Sequence[Mapping[str, Any]]) -> str:
+def _summary(events: Sequence[Mapping[str, Any]], occupied_hands: Mapping[str, Any] | None = None) -> str:
     by_type: Counter[str] = Counter(str(event.get("type", "unknown")) for event in events)
     by_limb: Counter[str] = Counter(str(event.get("limb", "unknown")) for event in events)
     by_pair: Counter[tuple[str, str]] = Counter((str(event.get("type", "unknown")), str(event.get("limb", "unknown"))) for event in events)
@@ -241,6 +232,11 @@ def _summary(events: Sequence[Mapping[str, Any]]) -> str:
     lines.extend(f"{name}: {count}" for name, count in sorted(by_limb.items()))
     lines += ["", "by type and limb:"]
     lines.extend(f"{event_type} ({limb}): {count}" for (event_type, limb), count in sorted(by_pair.items()))
+    lines += ["", "occupied hands:"]
+    if occupied_hands:
+        lines.extend(f"{name}: {value}" for name, value in sorted(occupied_hands.items()))
+    else:
+        lines.append("none")
     return "\n".join(lines) + "\n"
 
 
@@ -273,7 +269,17 @@ def run(
     # The persisted boundary file follows SPEC §6.6 (a list).  The return
     # value keeps the CLI's stage adapter compatibility with its M1 mapping
     # convention.
-    payload = {"events": events}
+    occupied_mask = np.asarray(features.get("occupied_mask", []), dtype=bool)
+    occupied_hands: dict[str, Any] = {}
+    if occupied_mask.ndim == 2:
+        for side, name in enumerate(("left hand", "right hand")):
+            if side < occupied_mask.shape[1] and occupied_mask[:, side].any():
+                occupied_hands[name] = {
+                    "frames": int(np.sum(occupied_mask[:, side])),
+                    "start": float(features["t"][np.flatnonzero(occupied_mask[:, side])[0]]),
+                    "end": float(features["t"][np.flatnonzero(occupied_mask[:, side])[-1]]),
+                }
+    payload = {"events": events, "occupied_hands": occupied_hands}
     destination.write_text(json.dumps(events, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
 
     review = out / "actions_review"
@@ -289,7 +295,7 @@ def run(
     frames = _read_video_frames(Path(clip) if clip is not None else None, requested_indices)
     for event in events[:30]:
         _review_image(features, points, event, review / f"{event['id']}_{event['type']}.png", frames)
-    (out / "actions_summary.txt").write_text(_summary(events), encoding="utf-8")
+    (out / "actions_summary.txt").write_text(_summary(events, occupied_hands), encoding="utf-8")
     return payload
 
 

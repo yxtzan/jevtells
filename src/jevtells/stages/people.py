@@ -31,15 +31,16 @@ def run(
     force: bool = False,
     config: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Write ``people.png`` and return the numbered boxes.
+    """Write ``people_<seconds>s.png`` and return the numbered boxes.
 
     ``at`` is in seconds and is clamped to the available video frames.  Boxes
     are expressed in pixel coordinates in the returned metadata while the
     detector arrays remain normalised coordinates on disk.
     """
 
-    destination = out / "people.png"
-    metadata = out / "people.json"
+    stamp = f"{float(at):04.1f}s"
+    destination = out / f"people_{stamp}.png"
+    metadata = out / f"people_{stamp}.json"
     if destination.exists() and metadata.exists() and not force:
         import json
         cached = json.loads(metadata.read_text(encoding="utf-8"))

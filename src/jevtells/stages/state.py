@@ -36,8 +36,11 @@ def _actions(points: dict[str, Any], window: dict[str, Any], actions: dict[str, 
                         action_type = event.get("type", "gesture")
                         start = float(event.get("start", event.get("t0", midpoint)))
                         end = float(event.get("end", event.get("t1", midpoint)))
-                        magnitude = event.get("amplitude", event.get("magnitude", "medium"))
-                        selected.append(f"{limb}: {action_type}, {max(0.0, end - start):.1f}s, {magnitude}")
+                        magnitude = event.get("amplitude", event.get("magnitude"))
+                        if magnitude is None or action_type in {"open_palm", "fist", "point", "palms_up"}:
+                            selected.append(f"{limb}: {action_type}, {max(0.0, end - start):.1f}s")
+                        else:
+                            selected.append(f"{limb}: {action_type}, {max(0.0, end - start):.1f}s, {magnitude}")
                 except (TypeError, ValueError, AttributeError):
                     continue
             return selected or ["no notable gestures"]

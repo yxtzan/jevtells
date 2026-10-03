@@ -52,14 +52,27 @@ smoothing:
 
 actions:
   pose_visibility_threshold: 0.5
+  motion_visibility_threshold: 0.75
+  edge_margin: 0.04
+  hand_detection_ratio: 0.80
+  occupied_window_seconds: 10.0
+  occupied_face_radius: 1.0
+  occupied_ratio: 0.60
+  posture_window: 5.0
+  posture_ratio: 0.70
   min_action_duration: 0.20
   movement_threshold: 0.12
   state_threshold: 0.65
-  posture_seconds: 3.0
   max_per_window: 4
-  merge_gap_seconds: 0.20
+  merge_gap: 0.20
   small_threshold: 0.15
   large_threshold: 0.35
+  palms_up_min_score: 0.50
+  palms_up_max_vertical_cos: 0.70710678
+  palms_up_min_nose_offset: 0.30
+
+lean_in:
+  enabled: false
 
 shots:
   target_presence_ratio: 0.50

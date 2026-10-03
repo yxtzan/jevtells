@@ -111,3 +111,79 @@ def test_spread_gather_beat_and_nod_rules():
     events = detect_actions(features)
     types = {event["type"] for event in events}
     assert {"spread", "gather", "beat", "nod"}.issubset(types)
+
+
+def _motion_quality(frames: int, sides: int = 2):
+    return {
+        "wrist_visibility": np.ones((frames, sides), dtype=float),
+        "wrist_edge_ok": np.ones((frames, sides), dtype=bool),
+    }
+
+
+def test_motion_events_require_visible_in_frame_wrist():
+    t = np.arange(12) / 10.0
+    wrists = np.zeros((12, 2, 2), dtype=float)
+    wrists[:, 0, 1] = np.linspace(0.8, 0.2, 12)
+    features = {"t": t, "fps": 10.0, "wrist_norm": wrists, **_motion_quality(12)}
+    assert any(event["type"] == "raise" for event in detect_actions(features))
+    features["wrist_visibility"][4, 0] = 0.5
+    features["wrist_edge_ok"][4, 0] = False
+    assert not any(event["type"] == "raise" for event in detect_actions(features))
+
+
+def test_occupied_hand_only_keeps_large_motion_and_drops_hand_shape():
+    t = np.arange(20) / 10.0
+    wrists = np.zeros((20, 2, 2), dtype=float)
+    wrists[:, 0, 1] = np.linspace(0.9, 0.2, 20)
+    openness = np.zeros((20, 2), dtype=float)
+    openness[2:7, 0] = 1.0
+    features = {"t": t, "fps": 10.0, "wrist_norm": wrists, "hand_open": openness, "hand_point_ratio": np.ones((20, 2)), "occupied_mask": np.column_stack([np.ones(20, dtype=bool), np.zeros(20, dtype=bool)]), **_motion_quality(20)}
+    events = detect_actions(features)
+    assert not any(event["type"] in {"open_palm", "fist", "point", "palms_up"} and event["side"] == "left hand" for event in events)
+    assert any(event["type"] == "raise" and event["magnitude"] == "large" for event in events)
+
+
+def test_posture_ratio_filters_flickering_state():
+    t = np.arange(100) / 10.0
+    openness = np.ones((100, 2), dtype=float)
+    openness[::10, 0] = 0.0
+    events = detect_actions({"t": t, "hand_open": openness})
+    assert not any(event["type"] == "open_palm" for event in events)
+
+
+def test_palms_up_requires_orientation_angle_and_below_chin():
+    t = np.arange(12) / 10.0
+    base = {"t": t, "hand_point_ratio": np.ones((12, 2)), "palm_up_score": np.ones((12, 2)), "finger_vertical_cos": np.full((12, 2), 0.2), "wrist_below_nose": np.full((12, 2), 0.5)}
+    assert any(event["type"] == "palms_up" and event["side"] == "left hand" for event in detect_actions(base))
+    for key, value in (("palm_up_score", 0.4), ("finger_vertical_cos", 0.8), ("wrist_below_nose", 0.2)):
+        candidate = {name: np.array(item, copy=True) if isinstance(item, np.ndarray) else item for name, item in base.items()}
+        candidate[key][:, 0] = value
+        assert not any(event["type"] == "palms_up" and event["side"] == "left hand" for event in detect_actions(candidate))
+
+
+def test_overlapping_hand_shapes_keep_highest_priority_and_no_magnitude():
+    t = np.arange(12) / 10.0
+    straight = np.zeros((12, 2, 5), dtype=float)
+    straight[:, 0, 0] = 1.0
+    straight[:, 0, 1:] = 0.0
+    nan_right = np.full((12,), np.nan)
+    features = {
+        "t": t,
+        "hand_open": np.column_stack([np.ones(12), nan_right]),
+        "finger_straight": straight,
+        "palm_up_score": np.column_stack([np.ones(12), nan_right]),
+        "finger_vertical_cos": np.column_stack([np.full(12, 0.2), nan_right]),
+        "wrist_below_nose": np.column_stack([np.full(12, 0.5), nan_right]),
+        "hand_point_ratio": np.ones((12, 2)),
+    }
+    events = detect_actions(features)
+    left_shapes = [event for event in events if event["side"] == "left hand" and event["type"] in {"point", "palms_up", "open_palm", "fist"}]
+    assert [event["type"] for event in left_shapes] == ["point"]
+    assert left_shapes[0]["magnitude"] is None
+
+
+def test_lean_in_is_disabled_by_default_but_configurable():
+    t = np.arange(12) / 10.0
+    features = {"t": t, "shoulder_width_relative": np.linspace(1.0, 1.5, 12)}
+    assert not any(event["type"] == "lean_in" for event in detect_actions(features))
+    assert any(event["type"] == "lean_in" for event in detect_actions(features, config={"lean_in": {"enabled": True}}))

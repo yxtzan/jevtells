@@ -1,4 +1,4 @@
-"""Conservative gesture event rules for M2."""
+"""Conservative, configuration-driven gesture event rules for M2."""
 
 from __future__ import annotations
 
@@ -7,30 +7,51 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 
-DEFAULT_RULE_CONFIG: dict[str, float | int] = {
+SHAPE_TYPES = {"open_palm", "fist", "point", "palms_up"}
+MOTION_TYPES = {"raise", "press_down", "beat", "spread", "gather"}
+SHAPE_PRIORITY = {"fist": 0, "open_palm": 1, "palms_up": 2, "point": 3}
+
+DEFAULT_RULE_CONFIG: dict[str, Any] = {
+    "pose_visibility_threshold": 0.5,
+    "motion_visibility_threshold": 0.75,
+    "edge_margin": 0.04,
+    "hand_detection_ratio": 0.80,
+    "occupied_window_seconds": 10.0,
+    "occupied_face_radius": 1.0,
+    "occupied_ratio": 0.60,
+    "posture_window": 5.0,
+    "posture_ratio": 0.70,
     "min_action_duration": 0.2,
-    "posture_max_duration": 3.0,
     "movement_threshold": 0.12,
-    "small_magnitude": 0.12,
-    "large_magnitude": 0.35,
     "state_threshold": 0.65,
-    "max_events_per_window": 4,
-    "merge_gap": 0.15,
+    "max_per_window": 4,
+    "merge_gap": 0.20,
+    "small_threshold": 0.15,
+    "large_threshold": 0.35,
+    "palms_up_min_score": 0.50,
+    "palms_up_max_vertical_cos": 0.70710678,
+    "palms_up_min_nose_offset": 0.30,
+    "lean_in": {"enabled": False},
 }
 
 
-def _cfg(config: Mapping[str, Any] | None) -> dict[str, float | int]:
+def _cfg(config: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Resolve the same keys used by ``config/default.yaml``."""
     values = dict(DEFAULT_RULE_CONFIG)
-    values.update(config or {})
+    if isinstance(config, Mapping):
+        actions = config.get("actions")
+        if isinstance(actions, Mapping):
+            values.update(actions)
+        values.update({key: value for key, value in config.items() if key != "actions"})
+        if isinstance(config.get("lean_in"), Mapping):
+            values["lean_in"] = dict(config["lean_in"])
     return values
 
 
 def _array(features: Mapping[str, Any], key: str, shape: tuple[int, ...] | None = None) -> np.ndarray:
     value = features.get(key)
     if value is None:
-        if shape is None:
-            return np.asarray([], dtype=float)
-        return np.full(shape, np.nan, dtype=float)
+        return np.full(shape, np.nan, dtype=float) if shape is not None else np.asarray([], dtype=float)
     return np.asarray(value, dtype=float)
 
 
@@ -42,12 +63,14 @@ def _times(features: Mapping[str, Any], n: int) -> tuple[np.ndarray, float]:
     return times, fps
 
 
+def _span(times: np.ndarray, t0: float, t1: float) -> np.ndarray:
+    return np.flatnonzero((times >= float(t0)) & (times <= float(t1)))
+
+
 def _magnitude(amplitude: float, settings: Mapping[str, Any]) -> str:
-    small = float(settings["small_magnitude"])
-    large = float(settings["large_magnitude"])
-    if amplitude >= large:
+    if amplitude >= float(settings["large_threshold"]):
         return "large"
-    if amplitude >= small:
+    if amplitude >= float(settings["small_threshold"]):
         return "medium"
     return "small"
 
@@ -59,70 +82,138 @@ def _runs(mask: np.ndarray, times: np.ndarray, min_duration: float) -> list[tupl
     padded = np.r_[False, values, False]
     starts = np.flatnonzero(np.diff(padded.astype(int)) == 1)
     ends = np.flatnonzero(np.diff(padded.astype(int)) == -1) - 1
-    output: list[tuple[int, int]] = []
-    for start, end in zip(starts, ends):
-        if float(times[end] - times[start]) >= float(min_duration):
-            output.append((int(start), int(end)))
-    return output
+    return [(int(start), int(end)) for start, end in zip(starts, ends) if float(times[end] - times[start]) >= float(min_duration)]
 
 
-def _event(event_type: str, side: str, t0: float, t1: float, amplitude: float, params: Mapping[str, Any], settings: Mapping[str, Any]) -> dict[str, Any]:
-    return {"id": "", "t0": float(t0), "t1": float(t1), "tmid": float((t0 + t1) / 2), "type": event_type, "side": side, "magnitude": _magnitude(float(amplitude), settings), "params": dict(params)}
+def _event(event_type: str, side: str, t0: float, t1: float, amplitude: float | None, params: Mapping[str, Any], settings: Mapping[str, Any]) -> dict[str, Any]:
+    magnitude = None if event_type in SHAPE_TYPES else _magnitude(float(amplitude or 0.0), settings)
+    return {"id": "", "t0": float(t0), "t1": float(t1), "tmid": float((t0 + t1) / 2), "type": event_type, "side": side, "magnitude": magnitude, "params": dict(params)}
+
+
+def _sides(event: Mapping[str, Any]) -> tuple[int, ...]:
+    return {"left hand": (0,), "right hand": (1,), "both hands": (0, 1)}.get(str(event.get("side", "")), ())
+
+
+def _motion_valid(features: Mapping[str, Any], times: np.ndarray, event: Mapping[str, Any], settings: Mapping[str, Any]) -> bool:
+    indices = _span(times, float(event["t0"]), float(event["t1"]))
+    if not len(indices):
+        return False
+    visibility = _array(features, "wrist_visibility")
+    edge_ok = np.asarray(features.get("wrist_edge_ok", []), dtype=bool)
+    if visibility.ndim != 2 or edge_ok.ndim != 2:
+        return True
+    for side in _sides(event):
+        if side >= visibility.shape[1] or side >= edge_ok.shape[1]:
+            return False
+        if not np.all(np.isfinite(visibility[indices, side]) & (visibility[indices, side] >= float(settings["motion_visibility_threshold"]))):
+            return False
+        if not np.all(edge_ok[indices, side]):
+            return False
+    return True
+
+
+def _hand_shape_valid(features: Mapping[str, Any], times: np.ndarray, event: Mapping[str, Any], settings: Mapping[str, Any]) -> bool:
+    ratios = _array(features, "hand_point_ratio")
+    indices = _span(times, float(event["t0"]), float(event["t1"]))
+    if ratios.ndim != 2 or not len(indices):
+        return True
+    required = float(settings["hand_detection_ratio"])
+    return all(side < ratios.shape[1] and float(np.mean(ratios[indices, side] >= 1.0)) >= required for side in _sides(event))
+
+
+def _occupied(features: Mapping[str, Any], times: np.ndarray, event: Mapping[str, Any]) -> bool:
+    values = np.asarray(features.get("occupied_mask", []), dtype=bool)
+    indices = _span(times, float(event["t0"]), float(event["t1"]))
+    if values.ndim != 2 or not len(indices):
+        return False
+    return any(side < values.shape[1] and float(np.mean(values[indices, side])) >= 0.5 for side in _sides(event))
+
+
+def _posture_mask(mask: np.ndarray, times: np.ndarray, settings: Mapping[str, Any]) -> np.ndarray:
+    values = np.asarray(mask, dtype=bool)
+    result = np.zeros(len(values), dtype=bool)
+    half = float(settings["posture_window"]) / 2.0
+    min_state_duration = float(settings["posture_window"]) * float(settings["posture_ratio"])
+    for index, timestamp in enumerate(times):
+        local = np.flatnonzero(np.abs(times - timestamp) <= half)
+        if len(local) and float(np.mean(values[local])) >= float(settings["posture_ratio"]):
+            active = local[values[local]]
+            active_duration = float(times[active[-1]] - times[active[0]]) if len(active) > 1 else 0.0
+            if active_duration >= min_state_duration:
+                result[index] = True
+    return result
 
 
 def _movement(features: Mapping[str, Any], times: np.ndarray, settings: Mapping[str, Any], direction: str) -> list[dict[str, Any]]:
     wrists = _array(features, "wrist_norm")
     if wrists.ndim != 3 or wrists.shape[1] < 2:
-        wrists = _array(features, "wrist_px")
-    if wrists.ndim != 3 or wrists.shape[1] < 2:
         return []
     threshold = float(settings["movement_threshold"])
     fps = float(features.get("fps", 30.0))
-    velocity = _array(features, "wrist_velocity_px_s") if "wrist_velocity_px_s" in features and "wrist_norm" not in features else np.diff(wrists, axis=0, prepend=wrists[:1]) * fps
-    if velocity.shape != wrists.shape:
-        velocity = np.diff(wrists, axis=0, prepend=wrists[:1]) * fps
+    velocity = np.diff(wrists, axis=0, prepend=wrists[:1]) * fps
     events: list[dict[str, Any]] = []
     for side, name in enumerate(("left hand", "right hand")):
         vertical = velocity[:, side, 1]
-        if direction == "up":
-            mask = vertical < -threshold
-        else:
-            mask = vertical > threshold
+        mask = vertical < -threshold if direction == "up" else vertical > threshold
         for start, end in _runs(np.isfinite(vertical) & mask, times, float(settings["min_action_duration"])):
             displacement = float(abs(wrists[end, side, 1] - wrists[start, side, 1]))
             if displacement < threshold:
                 continue
-            events.append(_event("raise" if direction == "up" else "press_down", name, times[start], times[end], displacement, {"dy": displacement if direction == "down" else -displacement}, settings))
+            event = _event("raise" if direction == "up" else "press_down", name, times[start], times[end], displacement, {"dy": displacement if direction == "down" else -displacement}, settings)
+            if _motion_valid(features, times, event, settings):
+                events.append(event)
     return events
 
 
 def _state_events(features: Mapping[str, Any], times: np.ndarray, settings: Mapping[str, Any]) -> list[dict[str, Any]]:
     openness = _array(features, "hand_open")
     if openness.ndim != 2:
-        return []
+        openness = np.full((len(times), 2), np.nan, dtype=float)
     events: list[dict[str, Any]] = []
     for side, name in enumerate(("left hand", "right hand")):
-        for state_name, mask in (("open_palm", openness[:, side] >= float(settings["state_threshold"])), ("fist", openness[:, side] <= 1.0 - float(settings["state_threshold"]))):
-            for start, end in _runs(np.isfinite(openness[:, side]) & mask, times, float(settings["min_action_duration"])):
-                duration = float(times[end] - times[start])
-                # A long, unchanging state is a posture (e.g. holding a mic).
-                if duration > float(settings["posture_max_duration"]):
+        valid_open = np.isfinite(openness[:, side])
+        for state_name, state_mask in (("open_palm", openness[:, side] >= float(settings["state_threshold"])), ("fist", openness[:, side] <= 1.0 - float(settings["state_threshold"]))):
+            posture = _posture_mask(valid_open & state_mask, times, settings)
+            for start, end in _runs(valid_open & state_mask, times, float(settings["min_action_duration"])):
+                if np.any(posture[max(0, start - int(float(settings["posture_window"]) * float(features.get("fps", 30.0)) / 2)) : min(len(posture), end + 1 + int(float(settings["posture_window"]) * float(features.get("fps", 30.0)) / 2))]):
                     continue
-                events.append(_event(state_name, name, times[start], times[end], float(np.nanmean(openness[start : end + 1, side])), {"open_score": float(np.nanmean(openness[start : end + 1, side]))}, settings))
+                event = _event(state_name, name, times[start], times[end], None, {"open_score": float(np.nanmean(openness[start : end + 1, side]))}, settings)
+                if _hand_shape_valid(features, times, event, settings):
+                    events.append(event)
     straight = _array(features, "finger_straight")
     if straight.ndim == 3 and straight.shape[2] >= 5:
         for side, name in enumerate(("left hand", "right hand")):
-            point = (straight[:, side, 0] >= float(settings["state_threshold"])) & (np.nanmean(straight[:, side, 1:], axis=1) <= 1.0 - float(settings["state_threshold"]))
-            for start, end in _runs(np.nan_to_num(point, nan=False), times, float(settings["min_action_duration"])):
-                if times[end] - times[start] <= float(settings["posture_max_duration"]):
-                    events.append(_event("point", name, times[start], times[end], 1.0, {"index_extended": True}, settings))
+            other_values = straight[:, side, 1:]
+            other_counts = np.sum(np.isfinite(other_values), axis=1)
+            other_fingers = np.divide(np.nansum(other_values, axis=1), other_counts, out=np.full(len(other_values), np.nan), where=other_counts > 0)
+            point = (straight[:, side, 0] >= float(settings["state_threshold"])) & (other_fingers <= 1.0 - float(settings["state_threshold"]))
+            point = np.nan_to_num(point, nan=False)
+            posture = _posture_mask(point, times, settings)
+            for start, end in _runs(point, times, float(settings["min_action_duration"])):
+                if np.any(posture[max(0, start - int(float(settings["posture_window"]) * float(features.get("fps", 30.0)) / 2)) : min(len(posture), end + 1 + int(float(settings["posture_window"]) * float(features.get("fps", 30.0)) / 2))]):
+                    continue
+                event = _event("point", name, times[start], times[end], None, {"index_extended": True}, settings)
+                if _hand_shape_valid(features, times, event, settings):
+                    events.append(event)
     palm = _array(features, "palm_up_score")
+    vertical_cos = _array(features, "finger_vertical_cos")
+    below_nose = _array(features, "wrist_below_nose")
     if palm.ndim == 2:
         for side, name in enumerate(("left hand", "right hand")):
-            mask = palm[:, side] > 0
+            if side >= palm.shape[1]:
+                continue
+            mask = palm[:, side] >= float(settings["palms_up_min_score"])
+            if vertical_cos.ndim == 2 and side < vertical_cos.shape[1]:
+                mask &= vertical_cos[:, side] < float(settings["palms_up_max_vertical_cos"])
+            if below_nose.ndim == 2 and side < below_nose.shape[1]:
+                mask &= below_nose[:, side] >= float(settings["palms_up_min_nose_offset"])
+            posture = _posture_mask(mask, times, settings)
             for start, end in _runs(np.isfinite(palm[:, side]) & mask, times, float(settings["min_action_duration"])):
-                if times[end] - times[start] <= float(settings["posture_max_duration"]):
-                    events.append(_event("palms_up", name, times[start], times[end], 1.0, {"palm_orientation": "up"}, settings))
+                if np.any(posture[max(0, start - int(float(settings["posture_window"]) * float(features.get("fps", 30.0)) / 2)) : min(len(posture), end + 1 + int(float(settings["posture_window"]) * float(features.get("fps", 30.0)) / 2))]):
+                    continue
+                event = _event("palms_up", name, times[start], times[end], None, {"palm_orientation": "up"}, settings)
+                if _hand_shape_valid(features, times, event, settings):
+                    events.append(event)
     return events
 
 
@@ -138,7 +229,9 @@ def _two_hand_events(features: Mapping[str, Any], times: np.ndarray, settings: M
             amount = float(abs(distance[end] - distance[start]))
             if amount < threshold:
                 continue
-            events.append(_event(event_type, "both hands", times[start], times[end], amount, {"distance": amount}, settings))
+            event = _event(event_type, "both hands", times[start], times[end], amount, {"distance": amount}, settings)
+            if _motion_valid(features, times, event, settings):
+                events.append(event)
     return events
 
 
@@ -154,7 +247,9 @@ def _oscillation(values: np.ndarray, times: np.ndarray, event_type: str, side: s
         return []
     start, end = int(max(0, changes[0] - 1)), int(min(len(values) - 1, changes[min_reversals - 1] + 1))
     amplitude = float(np.nanmax(values[start : end + 1]) - np.nanmin(values[start : end + 1]))
-    return [_event(event_type, side, times[start], times[end], amplitude, {"reversals": int(min_reversals)}, settings)] if times[end] - times[start] >= float(settings["min_action_duration"]) else []
+    if times[end] - times[start] < float(settings["min_action_duration"]):
+        return []
+    return [_event(event_type, side, times[start], times[end], amplitude, {"reversals": int(min_reversals)}, settings)]
 
 
 def _head_events(features: Mapping[str, Any], times: np.ndarray, settings: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -165,46 +260,82 @@ def _head_events(features: Mapping[str, Any], times: np.ndarray, settings: Mappi
 
 
 def _beat_events(features: Mapping[str, Any], times: np.ndarray, settings: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Detect repeated small wrist beats as a single emphasis event."""
     wrists = _array(features, "wrist_norm")
     if wrists.ndim != 3 or wrists.shape[1] < 2:
         return []
     events: list[dict[str, Any]] = []
     for side, name in enumerate(("left hand", "right hand")):
-        events.extend(_oscillation(wrists[:, side, 1], times, "beat", name, settings, min_reversals=3))
+        for event in _oscillation(wrists[:, side, 1], times, "beat", name, settings, min_reversals=3):
+            if _motion_valid(features, times, event, settings):
+                events.append(event)
     return events
 
 
-def detect_actions(features: Mapping[str, Any], windows: Sequence[Mapping[str, Any]] | None = None, config: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
-    """Infer action events and optionally cap events independently per window."""
-    settings = _cfg(config)
-    n = len(_array(features, "t")) or len(_array(features, "wrist_norm"))
-    times, _ = _times(features, n)
-    events = _movement(features, times, settings, "up") + _movement(features, times, settings, "down") + _state_events(features, times, settings) + _two_hand_events(features, times, settings) + _head_events(features, times, settings) + _beat_events(features, times, settings)
-    shoulder = _array(features, "shoulder_width_relative")
-    if shoulder.ndim == 1 and len(shoulder):
-        delta = shoulder - np.nanmedian(shoulder)
-        for start, end in _runs(delta > float(settings["movement_threshold"]), times, float(settings["min_action_duration"])):
-            events.append(_event("lean_in", "upper body", times[start], times[end], float(np.nanmax(delta[start : end + 1])), {"shoulder_width_change": float(np.nanmax(delta[start : end + 1]))}, settings))
-    # Merge overlapping/nearby events sharing a type and limb.
-    events.sort(key=lambda item: (item["tmid"], item["type"], item["side"]))
+def _resolve_shape_conflicts(events: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    shapes = [event for event in events if event["type"] in SHAPE_TYPES]
+    others = [event for event in events if event["type"] not in SHAPE_TYPES]
+    kept: list[dict[str, Any]] = []
+    for event in sorted(shapes, key=lambda item: (-SHAPE_PRIORITY[item["type"]], item["t0"], item["t1"])):
+        if any(existing["side"] == event["side"] and event["t0"] <= existing["t1"] and existing["t0"] <= event["t1"] for existing in kept):
+            continue
+        kept.append(event)
+    return others + kept
+
+
+def _merge(events: Sequence[dict[str, Any]], settings: Mapping[str, Any]) -> list[dict[str, Any]]:
+    ordered = sorted(events, key=lambda item: (item["tmid"], item["type"], item["side"]))
     merged: list[dict[str, Any]] = []
-    for item in events:
+    for item in ordered:
         if merged and item["type"] == merged[-1]["type"] and item["side"] == merged[-1]["side"] and item["t0"] <= merged[-1]["t1"] + float(settings["merge_gap"]):
             merged[-1]["t1"] = max(merged[-1]["t1"], item["t1"])
             merged[-1]["tmid"] = (merged[-1]["t0"] + merged[-1]["t1"]) / 2
             continue
-        merged.append(item)
-    if windows:
-        limited: list[dict[str, Any]] = []
-        for window in windows:
-            inside = [item for item in merged if float(window["t0"]) <= item["tmid"] <= float(window["t1"])]
-            inside.sort(key=lambda item: {"large": 2, "medium": 1, "small": 0}.get(item["magnitude"], 0), reverse=True)
-            limited.extend(inside[: int(settings["max_events_per_window"])])
-        merged = sorted(limited, key=lambda item: item["tmid"])
-    for index, item in enumerate(merged, start=1):
-        item["id"] = f"A{index:03d}"
+        merged.append(dict(item))
     return merged
 
 
-__all__ = ["detect_actions", "DEFAULT_RULE_CONFIG"]
+def _filter_occupied(events: Sequence[dict[str, Any]], features: Mapping[str, Any], times: np.ndarray) -> list[dict[str, Any]]:
+    filtered: list[dict[str, Any]] = []
+    for event in events:
+        if not _occupied(features, times, event):
+            filtered.append(event)
+            continue
+        if event["type"] in SHAPE_TYPES:
+            continue
+        if event["type"] in MOTION_TYPES and event.get("magnitude") != "large":
+            continue
+        filtered.append(event)
+    return filtered
+
+
+def detect_actions(features: Mapping[str, Any], windows: Sequence[Mapping[str, Any]] | None = None, config: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Infer events, filter unreliable/occupied hands, and cap each window."""
+    settings = _cfg(config)
+    n = len(_array(features, "t")) or len(_array(features, "wrist_norm"))
+    times, _ = _times(features, n)
+    events = _movement(features, times, settings, "up") + _movement(features, times, settings, "down")
+    events += _state_events(features, times, settings) + _two_hand_events(features, times, settings)
+    events += _head_events(features, times, settings) + _beat_events(features, times, settings)
+    lean_config = settings.get("lean_in", {})
+    if isinstance(lean_config, Mapping) and bool(lean_config.get("enabled", False)):
+        shoulder = _array(features, "shoulder_width_relative")
+        if shoulder.ndim == 1 and len(shoulder):
+            delta = shoulder - np.nanmedian(shoulder)
+            for start, end in _runs(delta > float(settings["movement_threshold"]), times, float(settings["min_action_duration"])):
+                events.append(_event("lean_in", "upper body", times[start], times[end], float(np.nanmax(delta[start : end + 1])), {"shoulder_width_change": float(np.nanmax(delta[start : end + 1]))}, settings))
+    events = _filter_occupied(events, features, times)
+    events = _resolve_shape_conflicts(events)
+    events = _merge(events, settings)
+    if windows:
+        limited: list[dict[str, Any]] = []
+        for window in windows:
+            inside = [item for item in events if float(window["t0"]) <= item["tmid"] <= float(window["t1"])]
+            inside.sort(key=lambda item: (3 if item["type"] in SHAPE_TYPES else 0) + {"large": 2, "medium": 1, "small": 0, None: 0}.get(item.get("magnitude"), 0), reverse=True)
+            limited.extend(inside[: int(settings["max_per_window"])])
+        events = sorted(limited, key=lambda item: item["tmid"])
+    for index, item in enumerate(events, start=1):
+        item["id"] = f"A{index:03d}"
+    return events
+
+
+__all__ = ["detect_actions", "DEFAULT_RULE_CONFIG", "SHAPE_TYPES", "MOTION_TYPES"]
