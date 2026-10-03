@@ -9,45 +9,89 @@ from typing import Any
 import numpy as np
 
 from ..schemas import State
+from .voice import format_voice_text, window_voice_metrics
 
 
-def _voice_text(voice: dict[str, Any], window: dict[str, Any]) -> str:
-    """Describe measured voice features for one window."""
-    times = np.asarray(voice.get("t", []), dtype=float)
-    values = np.asarray(voice.get("rms_db", []), dtype=float)
-    selected = values[(times >= window["t0"]) & (times <= window["t1"])]
-    baseline = voice.get("baseline_rms_db")
-    if not len(selected) or baseline is None:
-        return "no voice frames measured"
-    return f"loudness {float(np.mean(selected) - baseline):+.1f} dB vs clip baseline"
+def _voice_text(voice: dict[str, Any], window: dict[str, Any], transcript: dict[str, Any] | None = None, config: dict[str, Any] | None = None) -> str:
+    """Describe all four measured voice dimensions for one window."""
+
+    try:
+        return format_voice_text(window_voice_metrics(voice, window, transcript, config))
+    except (TypeError, ValueError, KeyError):
+        return "loudness unknown; unknown pitch variation; speech rate 0.0 words/s; unknown pauses"
 
 
-def _actions(points: dict[str, Any], window: dict[str, Any]) -> list[str]:
-    """Summarize measured wrist travel for both sides."""
-    times = np.asarray(points["t"], dtype=float)
-    pose = np.asarray(points["pose"], dtype=float)
+def _actions(points: dict[str, Any], window: dict[str, Any], actions: dict[str, Any] | None = None) -> list[str]:
+    """Read action events for this window, with an explicit empty result."""
+
+    if actions is not None:
+        events = actions.get("events", actions) if isinstance(actions, dict) else actions
+        if isinstance(events, list):
+            selected: list[str] = []
+            for event in events:
+                try:
+                    midpoint = float(event.get("mid", event.get("tmid", (float(event.get("t0", 0.0)) + float(event.get("t1", 0.0))) / 2)))
+                    if float(window["t0"]) <= midpoint <= float(window["t1"]):
+                        limb = event.get("limb", event.get("side", ""))
+                        action_type = event.get("type", "gesture")
+                        start = float(event.get("start", event.get("t0", midpoint)))
+                        end = float(event.get("end", event.get("t1", midpoint)))
+                        magnitude = event.get("amplitude", event.get("magnitude"))
+                        if magnitude is None or action_type in {"open_palm", "fist", "point", "palms_up"}:
+                            selected.append(f"{limb}: {action_type}, {max(0.0, end - start):.1f}s")
+                        else:
+                            selected.append(f"{limb}: {action_type}, {max(0.0, end - start):.1f}s, {magnitude}")
+                except (TypeError, ValueError, AttributeError):
+                    continue
+            return selected or ["no notable gestures"]
+
+    times = np.asarray(points.get("t", []), dtype=float)
+    pose = np.asarray(points.get("pose", []), dtype=float)
     result: list[str] = []
     mask = (times >= window["t0"]) & (times <= window["t1"])
+    if pose.ndim != 3 or pose.shape[1] <= 16:
+        return ["no notable gestures"]
     for side, name, index in ((0, "left", 15), (1, "right", 16)):
         wrists = pose[mask, index, :2]
         wrists = wrists[np.isfinite(wrists).all(axis=1)]
         if len(wrists) < 1:
-            result.append(f"{name} wrist: no detection in window")
             continue
         travel = float(np.linalg.norm(np.diff(wrists, axis=0), axis=1).sum()) if len(wrists) > 1 else 0.0
-        result.append(f"{name} wrist: total travel {travel:.3f} normalized image units")
-    return result
+        if travel > 0:
+            result.append(f"{name} wrist: total travel {travel:.3f} normalized image units")
+    return result or ["no notable gestures"]
 
 
-def run(windows: list[dict[str, Any]], voice: dict[str, Any], scene: str, speaker: str, out: Path, force: bool = False, points: dict[str, Any] | None = None) -> dict[str, Any]:
+def run(
+    windows: list[dict[str, Any]],
+    voice: dict[str, Any],
+    scene: str,
+    speaker: str,
+    out: Path,
+    force: bool = False,
+    points: dict[str, Any] | None = None,
+    actions: dict[str, Any] | None = None,
+    config: dict[str, Any] | None = None,
+    transcript: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Validate and write exactly five state fields for every window."""
+
     destination = out / "states.json"
     if destination.exists() and not force:
-        return json.loads(destination.read_text())
+        return json.loads(destination.read_text(encoding="utf-8"))
+    if transcript is None:
+        transcript_path = out / "transcript.json"
+        if transcript_path.exists():
+            transcript = json.loads(transcript_path.read_text(encoding="utf-8"))
+    if actions is None:
+        actions_path = out / "actions.json"
+        if actions_path.exists():
+            loaded = json.loads(actions_path.read_text(encoding="utf-8"))
+            actions = loaded if isinstance(loaded, dict) else {"events": loaded}
     states: dict[str, Any] = {}
     measured_points = points or {"t": [], "pose": np.empty((0, 33, 4))}
     for window in windows:
-        state = State(scene=scene, speaker=speaker, subtitle={"current": window["subtitle"], "previous": window["prev_subtitle"]}, voice=_voice_text(voice, window), measured_actions=_actions(measured_points, window))
+        state = State(scene=scene, speaker=speaker, subtitle={"current": window["subtitle"], "previous": window.get("prev_subtitle", "")}, voice=_voice_text(voice, window, transcript, config), measured_actions=_actions(measured_points, window, actions))
         states[window["id"]] = state.model_dump()
-    destination.write_text(json.dumps(states, ensure_ascii=False, indent=2))
+    destination.write_text(json.dumps(states, ensure_ascii=False, indent=2), encoding="utf-8")
     return states
