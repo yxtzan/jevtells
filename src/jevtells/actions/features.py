@@ -107,8 +107,8 @@ def _finger_features(hand_px: np.ndarray, side: int = 0) -> tuple[float, np.ndar
         normal_norm = float(np.linalg.norm(normal))
         if normal_norm > 0:
             # Landmark order produces opposite normals for anatomical left
-            # and right hands, so orient the right-hand normal once here.
-            if int(side) == 1:
+            # and right hands, so orient the left-hand normal once here.
+            if int(side) == 0:
                 normal = -normal
             normal /= normal_norm
             screen_up = np.asarray([0.0, -1.0, 0.0])

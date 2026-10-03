@@ -144,7 +144,7 @@ def test_occupied_hand_only_keeps_large_motion_and_drops_hand_shape():
     events = detect_actions(features)
     assert not any(event["type"] in {"open_palm", "fist", "point", "palms_up"} and event["side"] == "left hand" for event in events)
     assert any(event["type"] == "raise" and event["magnitude"] == "large" for event in events)
-    for displacement in (0.20, 0.40):
+    for displacement in (0.19, 0.40):
         candidate = {key: np.array(value, copy=True) if isinstance(value, np.ndarray) else value for key, value in features.items()}
         candidate["wrist_norm"][:, 0, 1] = 0.8
         candidate["wrist_norm"][2:7, 0, 1] = np.linspace(0.8, 0.8 - displacement, 5)
@@ -179,6 +179,27 @@ def _synthetic_hand(palm_sign: float) -> np.ndarray:
     return hand
 
 
+def _anatomical_hand(side: int, palm_up: bool) -> np.ndarray:
+    """Build mirrored MCP geometry with a physical palm-up/down orientation.
+
+    In image coordinates the left-hand index MCP is to the right of the
+    wrist and the pinky MCP to the left; the right hand is mirrored.  A
+    A screen-up palm normal has both MCPs closer to the camera than the wrist
+    (negative MediaPipe z) in this mirrored construction.
+    """
+    hand = np.zeros((21, 3), dtype=float)
+    hand[:] = [0.4, 0.4, 0.0]
+    wrist_x, wrist_y = 0.4, 0.4
+    index_x = wrist_x + (0.1 if side == 0 else -0.1)
+    pinky_x = wrist_x + (-0.1 if side == 0 else 0.1)
+    z = -0.1 if palm_up else 0.1
+    hand[0] = [wrist_x, wrist_y, 0.0]
+    hand[5] = [index_x, wrist_y, z]
+    hand[9] = [wrist_x + (0.05 if side == 0 else -0.05), wrist_y, z]
+    hand[17] = [pinky_x, wrist_y, z]
+    return hand
+
+
 def _raw_feature_points(hand: np.ndarray, frames: int = 8) -> dict[str, np.ndarray | float]:
     pose = np.stack([_person(0.5, 0.4, width=0.3) for _ in range(frames)])
     pose[:, 0, :2] = [0.5, 0.2]
@@ -187,7 +208,11 @@ def _raw_feature_points(hand: np.ndarray, frames: int = 8) -> dict[str, np.ndarr
     pose[:, 15, :2] = [0.42, 0.8]
     pose[:, 16, :2] = [0.58, 0.8]
     hands = np.full((frames, 2, 21, 3), np.nan, dtype=float)
-    hands[:, 0] = hand
+    hand_array = np.asarray(hand, dtype=float)
+    if hand_array.ndim == 2:
+        hands[:, 0] = hand_array
+    else:
+        hands[:, : min(2, hand_array.shape[0])] = hand_array[:2]
     return {"pose": pose, "hands": hands, "t": np.arange(frames) / 10.0, "fps": 10.0, "width": 1600.0, "height": 900.0}
 
 
@@ -202,12 +227,26 @@ def test_extract_features_detects_occupied_hand_from_raw_points():
 
 
 def test_extract_features_palms_up_uses_signed_3d_normal_and_pixels():
-    up = extract_features(_raw_feature_points(_synthetic_hand(1.0)))
-    down = extract_features(_raw_feature_points(_synthetic_hand(-1.0)))
-    assert np.all(up["palm_up_score"][:, 0] >= 0.99)
-    assert np.all(down["palm_up_score"][:, 0] <= -0.99)
-    assert any(event["type"] == "palms_up" for event in detect_actions(up))
-    assert not any(event["type"] == "palms_up" for event in detect_actions(down))
+    left_up = extract_features(_raw_feature_points(_anatomical_hand(0, True)))
+    left_down = extract_features(_raw_feature_points(_anatomical_hand(0, False)))
+    assert np.all(left_up["palm_up_score"][:, 0] >= 0.99)
+    assert np.all(left_down["palm_up_score"][:, 0] <= -0.99)
+    angled = _anatomical_hand(0, True)
+    angled[9] = [0.5, 0.5, -0.1]
+    pixel_angle = extract_features(_raw_feature_points(angled))
+    expected_cos = 90.0 / np.hypot(160.0, 90.0)
+    assert np.allclose(pixel_angle["finger_vertical_cos"][:, 0], expected_cos, atol=1e-6)
+
+    right_points = _raw_feature_points(np.stack([_anatomical_hand(0, True), _anatomical_hand(1, True)]))
+    right_up = extract_features(right_points)
+    right_down_points = _raw_feature_points(np.stack([_anatomical_hand(0, False), _anatomical_hand(1, False)]))
+    right_down = extract_features(right_down_points)
+    assert np.all(right_up["palm_up_score"][:, 1] >= 0.99)
+    assert np.all(right_down["palm_up_score"][:, 1] <= -0.99)
+    assert any(event["type"] == "palms_up" and event["side"] == "left hand" for event in detect_actions(left_up))
+    assert any(event["type"] == "palms_up" and event["side"] == "right hand" for event in detect_actions(right_up))
+    assert not any(event["type"] == "palms_up" for event in detect_actions(left_down))
+    assert not any(event["type"] == "palms_up" for event in detect_actions(right_down))
 
 
 def test_overlapping_hand_shapes_keep_highest_priority_and_no_magnitude():
