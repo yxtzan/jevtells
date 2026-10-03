@@ -346,8 +346,9 @@ def detect_actions(features: Mapping[str, Any], windows: Sequence[Mapping[str, A
             inside = [item for item in events if float(window["t0"]) <= item["tmid"] <= float(window["t1"])]
             # Keep confirmed large motions first, while hand-shape events
             # compete on equal footing with medium motions instead of being
-            # unconditionally displaced by them.
-            inside.sort(key=lambda item: {"large": 2, "medium": 1, None: 1, "small": 0}.get(item.get("magnitude"), 0), reverse=True)
+            # unconditionally displaced by them. Earlier events win ties.
+            weights = {"large": 2, "medium": 1, None: 1, "small": 0}
+            inside.sort(key=lambda item: (-weights.get(item.get("magnitude"), 0), item["tmid"], item["t0"]))
             limited.extend(inside[: int(settings["max_per_window"])])
         events = sorted(limited, key=lambda item: item["tmid"])
     for index, item in enumerate(events, start=1):

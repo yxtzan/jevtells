@@ -184,7 +184,7 @@ def _anatomical_hand(side: int, palm_up: bool) -> np.ndarray:
 
     In image coordinates the left-hand index MCP is to the right of the
     wrist and the pinky MCP to the left; the right hand is mirrored.  A
-    A screen-up palm normal has both MCPs closer to the camera than the wrist
+    screen-up palm normal has both MCPs closer to the camera than the wrist
     (negative MediaPipe z) in this mirrored construction.
     """
     hand = np.zeros((21, 3), dtype=float)
@@ -247,6 +247,46 @@ def test_extract_features_palms_up_uses_signed_3d_normal_and_pixels():
     assert any(event["type"] == "palms_up" and event["side"] == "right hand" for event in detect_actions(right_up))
     assert not any(event["type"] == "palms_up" for event in detect_actions(left_down))
     assert not any(event["type"] == "palms_up" for event in detect_actions(right_down))
+
+
+def test_window_limit_keeps_early_hand_shape_with_medium_motion_ties():
+    n = 30
+    t = np.arange(n) / 10.0
+
+    def motion_pattern(directions):
+        values = [0.8]
+        current = 0.8
+        for direction in directions:
+            values.extend(
+                [
+                    current + direction * 0.06,
+                    current + direction * 0.12,
+                    current + direction * 0.18,
+                    current + direction * 0.25,
+                    current + direction * 0.25,
+                    current + direction * 0.25,
+                ]
+            )
+            current += direction * 0.25
+        return np.asarray(values + [current] * (n - len(values)))[:n]
+
+    wrists = np.zeros((n, 2, 2), dtype=float)
+    wrists[:, 0, 1] = motion_pattern((-1, 1))
+    wrists[:, 1, 1] = motion_pattern((-1, 1))
+    hand_open = np.full((n, 2), np.nan, dtype=float)
+    hand_open[1:5, 0] = 1.0  # earlier than the four medium motions
+    features = {
+        "t": t,
+        "fps": 10.0,
+        "wrist_norm": wrists,
+        "hand_open": hand_open,
+        "hand_point_ratio": np.ones((n, 2)),
+    }
+    events = detect_actions(features, windows=[{"t0": 0.0, "t1": 2.4}])
+    assert any(event["type"] == "open_palm" for event in events)
+    medium = [event for event in events if event["magnitude"] == "medium"]
+    assert len(medium) == 3  # fourth medium ties with the shape and loses on time
+    assert len(events) == 4
 
 
 def test_overlapping_hand_shapes_keep_highest_priority_and_no_magnitude():
