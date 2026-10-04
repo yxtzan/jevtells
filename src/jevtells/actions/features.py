@@ -72,7 +72,9 @@ def _safe_norm(vector: np.ndarray, axis: int = -1) -> np.ndarray:
     return np.linalg.norm(np.asarray(vector, dtype=float), axis=axis)
 
 
-def _finger_features(hand_px: np.ndarray, side: int = 0) -> tuple[float, np.ndarray, float, float, float]:
+def _finger_features(
+    hand_px: np.ndarray, side: int = 0
+) -> tuple[float, np.ndarray, float, float, float, np.ndarray, np.ndarray, np.ndarray]:
     """Return hand shape features from pixel-scaled 3-D landmarks.
 
     MediaPipe's image landmarks use x/y image coordinates and a z value in
@@ -83,23 +85,51 @@ def _finger_features(hand_px: np.ndarray, side: int = 0) -> tuple[float, np.ndar
     """
     values = np.asarray(hand_px, dtype=float)
     if values.shape != (21, 3) or not np.isfinite(values[:, :2]).all():
-        return np.nan, np.full(5, np.nan), np.nan, np.nan, np.nan
+        return (
+            np.nan,
+            np.full(5, np.nan),
+            np.nan,
+            np.nan,
+            np.nan,
+            np.full(4, np.nan),
+            np.full(5, np.nan),
+            np.full(5, np.nan),
+        )
     xy = values[:, :2]
     wrist = xy[0]
     # MCP/PIP/DIP/TIP groups in the MediaPipe hand topology.
     groups = ((5, 6, 7, 8), (9, 10, 11, 12), (13, 14, 15, 16), (17, 18, 19, 20), (1, 2, 3, 4))
     straight: list[float] = []
     lengths: list[float] = []
+    tip_wrist_distances: list[float] = []
+    root_wrist_distances: list[float] = []
     for mcp, pip, dip, tip in groups:
         if not np.isfinite(xy[[mcp, pip, dip, tip]]).all():
             straight.append(np.nan)
+            tip_wrist_distances.append(np.nan)
+            root_wrist_distances.append(np.nan)
             continue
         tip_distance = float(np.linalg.norm(xy[tip] - wrist))
         pip_distance = float(np.linalg.norm(xy[pip] - wrist))
         lengths.append(tip_distance)
+        tip_wrist_distances.append(tip_distance)
+        root_wrist_distances.append(float(np.linalg.norm(xy[mcp] - wrist)))
         straight.append(float(tip_distance > pip_distance * 1.15))
     openness = float(np.nanmean(straight)) if straight else np.nan
     spread = float(np.nanmean(lengths)) if lengths else np.nan
+    fingertip_palm_ratio = np.full(4, np.nan, dtype=float)
+    if np.isfinite(values[[0, 5, 9, 13, 17], :2]).all():
+        # Use the MCP ring as the palm centre and wrist-to-middle-MCP as the
+        # palm length.  A curled finger's tip should be within this radius;
+        # this rejects the common "cupped hand" false fist.
+        palm_center = np.mean(xy[[0, 5, 9, 13, 17]], axis=0)
+        palm_length = float(np.linalg.norm(xy[9] - xy[0]))
+        if palm_length > 0:
+            fingertip_palm_ratio = np.asarray(
+                [np.linalg.norm(xy[index] - palm_center) / palm_length for index in (8, 12, 16, 20)],
+                dtype=float,
+            )
+
     if np.isfinite(values[[0, 5, 9, 17], :3]).all():
         index_vector = values[5, :3] - values[0, :3]
         pinky_vector = values[17, :3] - values[0, :3]
@@ -121,7 +151,16 @@ def _finger_features(hand_px: np.ndarray, side: int = 0) -> tuple[float, np.ndar
     else:
         palm_up = np.nan
         finger_vertical_cos = np.nan
-    return openness, np.asarray(straight, dtype=float), palm_up, spread, finger_vertical_cos
+    return (
+        openness,
+        np.asarray(straight, dtype=float),
+        palm_up,
+        spread,
+        finger_vertical_cos,
+        fingertip_palm_ratio,
+        np.asarray(tip_wrist_distances, dtype=float),
+        np.asarray(root_wrist_distances, dtype=float),
+    )
 
 
 def _rolling_ratio(mask: np.ndarray, fps: float, window_seconds: float) -> np.ndarray:
@@ -191,6 +230,9 @@ def extract_features(points: Mapping[str, Any], config: Mapping[str, Any] | None
     palm_orientation = np.full((len(pose), 2), np.nan)
     finger_vertical_cos = np.full((len(pose), 2), np.nan)
     hand_spread = np.full((len(pose), 2), np.nan)
+    fingertip_palm_ratio = np.full((len(pose), 2, 4), np.nan)
+    finger_tip_wrist_distance = np.full((len(pose), 2, 5), np.nan)
+    finger_root_wrist_distance = np.full((len(pose), 2, 5), np.nan)
     hand_point_ratio = np.zeros((len(pose), 2), dtype=float)
     for frame in range(len(pose)):
         for side in range(2):
@@ -198,12 +240,24 @@ def extract_features(points: Mapping[str, Any], config: Mapping[str, Any] | None
             present = np.isfinite(raw_hand[:, :2]).all(axis=1) if raw_hand.ndim == 2 and len(raw_hand) else np.zeros(21, dtype=bool)
             hand_point_ratio[frame, side] = float(np.mean(present)) if len(present) else 0.0
             hand_geometry = hands_px[frame, side] if frame < len(hands_px) else np.full((21, 3), np.nan)
-            opened, straight, palm, spread, vertical_cos = _finger_features(hand_geometry, side=side)
+            (
+                opened,
+                straight,
+                palm,
+                spread,
+                vertical_cos,
+                tip_palm,
+                tip_wrist,
+                root_wrist,
+            ) = _finger_features(hand_geometry, side=side)
             open_score[frame, side] = opened
             finger_straight[frame, side] = straight
             palm_orientation[frame, side] = palm
             finger_vertical_cos[frame, side] = vertical_cos
             hand_spread[frame, side] = spread
+            fingertip_palm_ratio[frame, side] = tip_palm
+            finger_tip_wrist_distance[frame, side] = tip_wrist
+            finger_root_wrist_distance[frame, side] = root_wrist
     two_hands_distance = _safe_norm(wrist_px[:, 0] - wrist_px[:, 1]) / shoulder_width
     nose_relative = (pose_xy[:, 0] - shoulder_center) / shoulder_width[:, None]
     nose_relative[~np.isfinite(nose_relative)] = np.nan
@@ -250,6 +304,9 @@ def extract_features(points: Mapping[str, Any], config: Mapping[str, Any] | None
         "palm_up_score": palm_orientation,
         "finger_vertical_cos": finger_vertical_cos,
         "hand_spread": hand_spread,
+        "fingertip_palm_ratio": fingertip_palm_ratio,
+        "finger_tip_wrist_distance": finger_tip_wrist_distance,
+        "finger_root_wrist_distance": finger_root_wrist_distance,
         "hand_point_ratio": hand_point_ratio,
         "wrist_visibility": wrist_visibility,
         "wrist_edge_ok": wrist_edge_ok,

@@ -24,7 +24,7 @@ class TrackConfig:
 
     visibility_threshold: float = 0.5
     iou_threshold: float = 0.05
-    center_distance_shoulder_ratio: float = 1.5
+    max_center_distance_shoulder_width: float = 1.5
     area_ratio_min: float = 0.35
     area_ratio_max: float = 2.8
 
@@ -36,13 +36,11 @@ def _config(config: Mapping[str, Any] | None) -> TrackConfig:
     nested = config.get("tracking") if isinstance(config, Mapping) else None
     if isinstance(nested, Mapping):
         source = nested
-    aliases = {
-        "center_distance_shoulder_ratio": "max_center_distance_shoulder_width",
-        "area_ratio_min": "area_ratio_min",
-        "area_ratio_max": "area_ratio_max",
-        "iou_threshold": "iou_threshold",
+    values = {
+        field: source[field]
+        for field in ("iou_threshold", "max_center_distance_shoulder_width", "area_ratio_min", "area_ratio_max")
+        if field in source
     }
-    values = {field: source[key] for field, key in aliases.items() if key in source}
     if isinstance(config.get("detection"), Mapping) and "pose_visibility_threshold" in config["detection"]:
         values["visibility_threshold"] = config["detection"]["pose_visibility_threshold"]
     return TrackConfig(**values)
@@ -113,7 +111,7 @@ def _candidate_match(previous: np.ndarray, candidates: np.ndarray, width: float,
         area_previous = max(1.0, float((previous_box[2] - previous_box[0]) * (previous_box[3] - previous_box[1])))
         area_candidate = max(1.0, float((box[2] - box[0]) * (box[3] - box[1])))
         area_ratio = area_candidate / area_previous
-        within_geometry = center_distance <= config.center_distance_shoulder_ratio * shoulder and config.area_ratio_min <= area_ratio <= config.area_ratio_max
+        within_geometry = center_distance <= config.max_center_distance_shoulder_width * shoulder and config.area_ratio_min <= area_ratio <= config.area_ratio_max
         if iou >= config.iou_threshold or within_geometry:
             # IoU is the primary signal; distance and area resolve ties.
             scored.append((iou, index, center_distance / shoulder, abs(np.log(area_ratio))))

@@ -1,6 +1,8 @@
 """Pydantic schemas for stage boundary JSON files."""
 
-from pydantic import BaseModel
+from typing import Any
+
+from pydantic import BaseModel, Field
 
 
 class Window(BaseModel):
@@ -24,3 +26,46 @@ class State(BaseModel):
     subtitle: dict[str, str]
     voice: str
     measured_actions: list[str]
+
+
+class JudgmentScore(BaseModel):
+    """A normalized score alongside the unmodified service value."""
+    value: float | None = Field(default=None, ge=0.0, le=1.0)
+    raw: Any = None
+
+
+class JudgmentChoice(BaseModel):
+    """A choice with model confidence and its optional distribution."""
+    label: str | None = None
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    probs: dict[str, float] = Field(default_factory=dict)
+
+
+class Judgment(BaseModel):
+    """One window's Jev judgment, including nullable failed results."""
+    scores: dict[str, JudgmentScore | None]
+    intent: JudgmentChoice | None = None
+    emotion: JudgmentChoice | None = None
+    actions: dict[str, float | None] = Field(default_factory=dict)
+    error: str | None = None
+
+
+class Narration(BaseModel):
+    """A neutral annotation and a checked subtitle quotation."""
+    line: str
+    quote: str
+    error: str | None = None
+
+
+class SceneDescription(BaseModel):
+    """A cached visual description with API accounting."""
+    scene: str
+    model: str | None = None
+    cost: float | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+    calls: int = Field(ge=0)
+    prompt_tokens: int = Field(ge=0)
+    completion_tokens: int = Field(ge=0)
+    failed: int = Field(ge=0)
+    source: str | None = None
+    error: str | None = None

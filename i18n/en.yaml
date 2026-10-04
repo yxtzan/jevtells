@@ -1,0 +1,41 @@
+actions:
+  raise: raise hand
+  press_down: press down
+  open_palm: open palm
+  palms_up: palms up
+  point: point
+  fist: fist
+  spread: spread hands
+  gather: gather hands
+  beat: beat emphasis
+  nod: nod
+  shake: shake head
+  lean_in: lean in
+intents:
+  state_position: state a position
+  explain: explain
+  give_example: give an example
+  tell_story: tell a story
+  emphasize: emphasize a point
+  respond_challenge: respond to a challenge
+  deflect: deflect
+  humor: use humor
+  ask: ask a question
+  transition: transition
+emotions:
+  calm: calm
+  firm: firm
+  excited: excited
+  warm: warm
+  serious: serious
+  tense: tense
+  relaxed: relaxed
+scores:
+  confidence: confidence
+  focus: focus
+  tension: tension
+ui:
+  disclaimer: Uncalibrated · For demonstration only
+  source: "Source: JevTells + OpenRouter"
+  unknown: unknown
+  missing: —

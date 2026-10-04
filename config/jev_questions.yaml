@@ -1,0 +1,44 @@
+questions:
+  confidence:
+    type: score
+    question: How confident does the speaker appear?
+    criteria: [very_low, low, medium, high, very_high]
+  focus:
+    type: score
+    question: How focused and concentrated does the speaker appear?
+    criteria: [very_low, low, medium, high, very_high]
+  tension:
+    type: score
+    question: How tense or constrained does the speaker appear?
+    criteria: [very_low, low, medium, high, very_high]
+  action_expressive:
+    type: noul
+    instructions: "Assess whether `measured_actions[{k}]` supports or emphasizes the spoken content: {action}"
+    criteria:
+      "true": "yes"
+      "false": "no"
+  intent:
+    type: choice
+    question: What is the speaker mainly doing in this window?
+    criteria:
+      state_position: State a position
+      explain: Explain something
+      give_example: Give an example
+      tell_story: Tell a story
+      emphasize: Emphasize a point
+      respond_challenge: Respond to a challenge
+      deflect: Deflect or shift topic
+      humor: Use humor or self-deprecation
+      ask: Ask or pose a question
+      transition: Transition or set up the next point
+  emotion:
+    type: choice
+    question: Which observable emotional tone best fits the window?
+    criteria:
+      calm: Calm
+      firm: Firm
+      excited: Excited
+      warm: Warm
+      serious: Serious
+      tense: Tense
+      relaxed: Relaxed
