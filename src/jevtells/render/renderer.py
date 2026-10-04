@@ -40,10 +40,12 @@ def blur_frame(frame: Image.Image, rectangles: Sequence[Sequence[float]], origin
 
 
 class Composer:
-    def __init__(self, settings: Mapping[str, Any], layout: Layout, windows: Sequence[Mapping[str, Any]], points: Mapping[str, Any], actions: Sequence[Mapping[str, Any]], judgments: Mapping[str, Any], narration: Mapping[str, Any], transcript: Mapping[str, Any], *, title: str, sources: str, lang: str, blur: Sequence[Sequence[float]], subtitles: bool, config: Mapping[str, Any]) -> None:
+    def __init__(self, settings: Mapping[str, Any], layout: Layout, windows: Sequence[Mapping[str, Any]], points: Mapping[str, Any], actions: Sequence[Mapping[str, Any]], judgments: Mapping[str, Any], narration: Mapping[str, Any], transcript: Mapping[str, Any], *, title: str, sources: str, lang: str, blur: Sequence[Sequence[float]], subtitles: bool, config: Mapping[str, Any], shots: Sequence[Mapping[str, Any]] = ()) -> None:
         self.settings, self.layout, self.windows, self.points = settings, layout, windows, points
         self.events, self.judgments, self.transcript = actions, judgments, transcript
         self.blur, self.subtitles = blur, subtitles
+        self.shots = shots
+        self.audit: dict[str, Any] = {}
         self.tr = load_translations(lang)
         self.fonts = Fonts(settings, layout.scale)
         self.panels = Panels(settings, layout, self.fonts, self.tr, windows, judgments, narration, title, sources)
@@ -142,6 +144,56 @@ class Composer:
             ld.ellipse((anchor[0] - radius, anchor[1] - radius, anchor[0] + radius, anchor[1] + radius), fill=color, outline=self.c["ink"], width=max(1, self.layout.px(label["point_outline"])))
             image.alpha_composite(leader)
             image.alpha_composite(opacity(sprite, alpha), (x, y))
+            self.audit["labels"].append({"slot": slot, "event": event["id"], "rect": [x, y, x + sprite.width, y + sprite.height], "fallback": True})
+
+    def forbidden(self, seconds: float) -> list[dict[str, Any]]:
+        zones = []
+        vx, vy, vw, vh = self.layout.video
+        def zone(name: str, rect: Sequence[float]) -> None:
+            zones.append({"name": name, "rect": list(self.layout.rect(rect))})
+        for shot in self.shots:
+            if float(shot["t0"]) <= seconds < float(shot["t1"]) and shot.get("target_box"):
+                x0, y0, x1, y1 = shot["target_box"]
+                zones.append({"name": "target", "rect": list(self.layout.source_rect((x0, y0, x1-x0, y1-y0)))})
+        ratio = self.settings["subtitle_exclusion_ratio"]
+        zone("subtitles", (vx, vy + vh * (1-ratio), vw, vh * ratio))
+        for rect in self.blur:
+            zones.append({"name": "blur", "rect": list(self.layout.source_rect(rect))})
+        margin = float(self.settings.get("layout", {}).get("safe_margin", 24))
+        for rect in ((vx,vy,vw,margin),(vx,vy,margin,vh),(vx+vw-margin,vy,margin,vh),(vx,vy+vh-margin,vw,margin)):
+            zone("edge", rect)
+        if self.layout.kind == "h":
+            for name in ("card", "commentary", "status"):
+                zone(name, self.p[name])
+            zone("quote", (self.p["commentary"][0],self.p["quote_y"],self.p["commentary"][2],self.p["quote_size"]*self.settings["components"]["line_height"]+2*self.p["quote_padding"][1]))
+        return zones
+
+    def debug_layout(self, clip: Path, out: Path) -> None:
+        directory = out / "layout_debug"
+        directory.mkdir(exist_ok=True)
+        capture = cv2.VideoCapture(str(clip))
+        try:
+            for shot in self.shots:
+                seconds = (float(shot["t0"]) + float(shot["t1"])) / 2
+                capture.set(cv2.CAP_PROP_POS_MSEC, seconds * 1000)
+                ok, frame = capture.read()
+                if not ok:
+                    raise RuntimeError("cannot decode layout debug midpoint")
+                index = min(len(self.points["pose"])-1, round(seconds * float(self.points.get("fps", 30))))
+                image = self.frame(Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)), seconds, index)
+                draw = ImageDraw.Draw(image)
+                font = self.fonts.font("mono", 12)
+                for zone in self.audit["forbidden"]:
+                    draw.rectangle(zone["rect"], outline="red", width=2)
+                    draw.text(tuple(zone["rect"][:2]), zone["name"], fill="red", font=font)
+                for position in self.p["label_slots"]:
+                    x, y = self.layout.point(*position)
+                    draw.rectangle((x,y,x+self.layout.px(self.p["label_width"]),y+self.layout.px(80)),outline="#4C82FF",width=2)
+                for label in self.audit["labels"]:
+                    draw.rectangle(label["rect"], outline="#C8FF2E", width=3)
+                image.save(directory / f"{self.layout.kind}_shot_{shot['index']:03d}.png")
+        finally:
+            capture.release()
 
     def _subtitles(self, image: Image.Image, seconds: float) -> None:
         if any("subtitle" in window for window in self.windows):
@@ -164,6 +216,7 @@ class Composer:
         image.alpha_composite(layer, (self.layout.px(vx + vw / 2) - layer.width // 2, self.layout.px(vy + vh - cfg["bottom"]) - layer.height))
 
     def frame(self, source: Image.Image, seconds: float, point_index: int) -> Image.Image:
+        self.audit = {"seconds": seconds, "output": list(self.layout.output), "labels": [], "forbidden": self.forbidden(seconds)}
         source = blur_frame(source, self.blur, self.layout.source, self.settings["blur_radius"])
         x, y, width, height = self.layout.video
         image = Image.new("RGBA", self.layout.output, self.c["ink"])
@@ -231,7 +284,7 @@ def _signature(out: Path, values: Mapping[str, Any]) -> str:
     return digest.hexdigest()
 
 
-def run(clip: Path, out: Path, windows: Sequence[Mapping[str, Any]], points: Mapping[str, Any], *, config: Mapping[str, Any], speaker: str, lang: str = "zh", title: str | None = None, layout: str = "both", blur: Sequence[Sequence[float]] = (), subtitles: bool = True, source_size: tuple[int, int] | None = None, force: bool = False) -> dict[str, Any]:
+def run(clip: Path, out: Path, windows: Sequence[Mapping[str, Any]], points: Mapping[str, Any], *, config: Mapping[str, Any], speaker: str, lang: str = "zh", title: str | None = None, layout: str = "both", blur: Sequence[Sequence[float]] = (), subtitles: bool = True, source_size: tuple[int, int] | None = None, force: bool = False, debug_layout: bool = False) -> dict[str, Any]:
     settings = config["render"]
     executable = _ffmpeg()
     available = subprocess.run([executable, "-hide_banner", "-encoders"], capture_output=True, text=True, check=True).stdout
@@ -251,7 +304,7 @@ def run(clip: Path, out: Path, windows: Sequence[Mapping[str, Any]], points: Map
     for kind in (("h", "v") if layout == "both" else (layout,)):
         signature = _signature(out, {"render": settings, "kind": kind, "title": title, "lang": lang, "blur": blur, "subtitles": subtitles, "source_size": source_size})
         destination = out / f"output_{kind}.mp4"
-        if destination.exists() and not force and previous_meta.get(kind, {}).get("signature") == signature:
+        if destination.exists() and not force and not debug_layout and previous_meta.get(kind, {}).get("signature") == signature:
             results[kind] = {**previous_meta[kind], "cached": True}
             print(f"render {kind}: cached {destination}", flush=True)
             continue
@@ -267,7 +320,9 @@ def run(clip: Path, out: Path, windows: Sequence[Mapping[str, Any]], points: Map
             fps = float(settings["fps"])
             total = round(total_input / input_fps * fps)
             geometry = Layout.create(kind, settings, source_size or frame_size)
-            painter = Composer(settings, geometry, windows, points, events, judgments, narration, transcript, title=title, sources=_sources(out, settings, config, lang), lang=lang, blur=blur, subtitles=subtitles, config=config)
+            painter = Composer(settings, geometry, windows, points, events, judgments, narration, transcript, title=title, sources=_sources(out, settings, config, lang), lang=lang, blur=blur, subtitles=subtitles, config=config, shots=read("shots.json", []))
+            if debug_layout:
+                painter.debug_layout(clip, out)
             raw = out / f"render_{kind}_noaudio.mp4"
             log_path = out / f"render_{kind}_ffmpeg.log"
             command = [executable, "-y", "-hide_banner", "-loglevel", "warning", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{geometry.output[0]}x{geometry.output[1]}", "-r", str(fps), "-i", "pipe:0", "-an", "-c:v", encoder, "-pix_fmt", "yuv420p"]
@@ -279,6 +334,7 @@ def run(clip: Path, out: Path, windows: Sequence[Mapping[str, Any]], points: Map
                     command += ["-allow_sw", "1"]
             command.append(str(raw))
             with log_path.open("w", encoding="utf-8") as log:
+                trace = (out / f"layout_trace_{kind}.jsonl").open("w", encoding="utf-8")
                 process = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=log, stdout=subprocess.DEVNULL)
                 last_source = -1
                 frame = None
@@ -294,6 +350,7 @@ def run(clip: Path, out: Path, windows: Sequence[Mapping[str, Any]], points: Map
                         rgb = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
                         point_index = min(len(points["pose"]) - 1, round(seconds * float(points.get("fps", input_fps))))
                         composed = painter.frame(rgb, seconds, point_index)
+                        trace.write(json.dumps({"frame": frame_index, **painter.audit}) + "\n")
                         process.stdin.write(composed.tobytes())
                         if frame_index % max(1, round(fps * 5)) == 0:
                             print(f"render {kind}: {seconds:.1f}/{total / fps:.1f}s elapsed={time.perf_counter() - started:.1f}s", flush=True)
@@ -303,6 +360,7 @@ def run(clip: Path, out: Path, windows: Sequence[Mapping[str, Any]], points: Map
                     process.kill()
                     raise
                 finally:
+                    trace.close()
                     capture.release()
                     try:
                         process.stdin.close()
