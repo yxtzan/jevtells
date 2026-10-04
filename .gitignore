@@ -36,3 +36,6 @@ samples/*
 
 # Files the Claude desktop app saves into this folder
 /Claude outputs/
+
+# M5 generated fixtures (source videos remain read-only)
+/samples/synthetic/
