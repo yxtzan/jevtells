@@ -16,7 +16,7 @@ from PIL import Image, ImageDraw, ImageFilter
 from ..actions.features import smooth_zero_phase
 from ..i18n import load_translations
 from ..stages.prepare import _ffmpeg
-from .animation import progress, window_at
+from .animation import commentary_at, window_at
 from .geometry import Layout
 from .labels import schedule
 from .panels import Panels, opacity
@@ -172,14 +172,11 @@ class Composer:
         if index is not None:
             elapsed = seconds - float(self.windows[index]["t0"])
             image.alpha_composite(opacity(self.panels.analysis(index, elapsed), attenuation))
-            image.alpha_composite(opacity(self.panels.quote(index), attenuation))
             animation = self.settings["animation"]
-            if index and elapsed < animation["commentary_out_seconds"]:
-                previous, pos = self.panels.commentary(index - 1)
-                image.alpha_composite(opacity(previous, attenuation * (1 - elapsed / animation["commentary_out_seconds"])), pos)
-            layer, position = self.panels.commentary(index)
-            amount = progress(elapsed, animation["commentary_in_seconds"])
-            position = (position[0], position[1] + self.layout.px(animation["commentary_offset"] * (1 - amount)))
+            sentence, amount, offset = commentary_at(index, elapsed, animation)
+            image.alpha_composite(opacity(self.panels.quote(sentence), amount * attenuation))
+            layer, position = self.panels.commentary(sentence)
+            position = (position[0], position[1] + self.layout.px(offset))
             image.alpha_composite(opacity(layer, amount * attenuation), position)
         else:
             layer, position = self.panels.commentary(None)
