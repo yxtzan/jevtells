@@ -25,8 +25,16 @@ def checks(config: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     if executable:
         try:
             output=subprocess.run([executable,'-hide_banner','-encoders'],capture_output=True,text=True,check=True).stdout
-            available=[name for name in ('libx264','h264_videotoolbox') if name in output]
-        except (OSError,subprocess.CalledProcessError):
+            for name in ('libx264','h264_videotoolbox'):
+                if name not in output:
+                    continue
+                trial=subprocess.run([executable,'-hide_banner','-loglevel','error',
+                    '-f','lavfi','-i','color=size=16x16:rate=1',
+                    '-frames:v','1','-c:v',name,'-pix_fmt','yuv420p','-f','null','-'],
+                    capture_output=True,timeout=15)
+                if trial.returncode==0:
+                    available.append(name)
+        except (OSError,subprocess.CalledProcessError,subprocess.TimeoutExpired):
             pass
     add('ffmpeg',bool(executable and available),', '.join(available) if available else 'unavailable','Install ffmpeg with libx264 (macOS: brew install ffmpeg).')
     for name in ('pose','hands'):
