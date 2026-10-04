@@ -30,3 +30,9 @@ samples/*
 .DS_Store
 .idea/
 .vscode/
+
+# Local design mockups (contain copyrighted frames)
+/design/
+
+# Files the Claude desktop app saves into this folder
+/Claude outputs/

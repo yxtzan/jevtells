@@ -11,6 +11,15 @@
 
 两段都是 1280×720、30 fps。
 
+**渲染参数**（M4 起使用。坐标单位为原视频像素，格式为 x, y, 宽, 高）：
+
+| 文件 | 水印模糊区域 | 他人发言时段 | 字幕 |
+|---|---|---|---|
+| `leijun_areyouok.mov` | `--blur 12,15,170,60`（左上角「G常 bilibili」） | 无 | `--subtitles off`（原片已烧录字幕） |
+| `jensen_panel.mov` | `--blur 1042,15,226,60`（右上角「环球新知 bilibili」） | `--others-speaking 0-7.3` | `--subtitles off` |
+
+雷军素材右上角的「mi」标志是发布会幻灯片本身的内容，不是水印，不做模糊。
+
 ---
 
 ## leijun_areyouok.mov
