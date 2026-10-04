@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from .resources import data_path
 
 
 Config = dict[str, Any]
@@ -20,7 +21,7 @@ Config = dict[str, Any]
 def default_path() -> Path:
     """Return the repository's default configuration path."""
 
-    return Path(__file__).resolve().parents[2] / "config" / "default.yaml"
+    return data_path("config/default.yaml")
 
 
 def _read(path: Path) -> Config:

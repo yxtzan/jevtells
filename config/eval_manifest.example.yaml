@@ -1,0 +1,48 @@
+anomalies:
+  min_lock_rate: 0.8
+  max_fallback_ratio: 0.3
+  event_rate_factor: 3
+clips:
+  - id: jensen_panel
+    input: samples/jensen_panel.mov
+    group: tune
+    parameters:
+      speaker: Jensen Huang
+      target: ['2@0', '1@12']
+      others_speaking: ['0-7.3']
+      blur: ['1042,15,226,60']
+      subtitles: 'off'
+      title: 'AI 读黄仁勋：每一层都被重写'
+    notes: Original; example groups do not establish independent holdout validation.
+  - id: jensen_left
+    input: samples/synthetic/jensen_left.mp4
+    group: tune
+    parameters:
+      speaker: Jensen Huang
+      target: ['1@0']
+      subtitles: 'off'
+    notes: Subject shifted left; card should remain right.
+  - id: jensen_right
+    input: samples/synthetic/jensen_right.mp4
+    group: holdout
+    parameters:
+      speaker: Jensen Huang
+      target: ['1@0']
+      subtitles: 'off'
+    notes: Subject shifted right; illustrative holdout group only.
+  - id: jensen_small
+    input: samples/synthetic/jensen_small.mp4
+    group: tune
+    parameters:
+      speaker: Jensen Huang
+      target: ['1@0']
+      subtitles: 'off'
+    notes: Far framing; no gesture labels.
+  - id: jensen_cut
+    input: samples/synthetic/jensen_cut.mp4
+    group: holdout
+    parameters:
+      speaker: Jensen Huang
+      target: ['1@0', '1@5', '1@10']
+      subtitles: 'off'
+    notes: Spatial cuts at 5 and 10 seconds; illustrative holdout group only.

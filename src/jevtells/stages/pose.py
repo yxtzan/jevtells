@@ -8,6 +8,7 @@ from typing import Any, Mapping
 import cv2
 import mediapipe as mp
 import numpy as np
+from ..resources import asset_path
 
 
 def _landmarks_to_array(landmarks: Any, width: int = 3) -> np.ndarray:
@@ -39,9 +40,10 @@ def run(clip: Path, out: Path, force: bool = False, model_dir: Path | None = Non
     models = settings.get("models", {}) if isinstance(settings.get("models", {}), Mapping) else {}
     max_people = int(detection.get("max_people", settings.get("max_people", 4)))
     max_hands = int(detection.get("max_hands", settings.get("max_hands", 4)))
-    root = model_dir or Path(__file__).resolve().parents[3] / "models"
-    pose_model = root / str(models.get("pose", settings.get("pose_model", "pose_landmarker_full.task")))
-    hand_model = root / str(models.get("hands", settings.get("hand_model", "hand_landmarker.task")))
+    pose_name=str(models.get("pose", settings.get("pose_model", "pose_landmarker_full.task")))
+    hand_name=str(models.get("hands", settings.get("hand_model", "hand_landmarker.task")))
+    pose_model=model_dir / pose_name if model_dir else asset_path(Path("models")/pose_name)
+    hand_model=model_dir / hand_name if model_dir else asset_path(Path("models")/hand_name)
     if not pose_model.exists() or not hand_model.exists():
         raise FileNotFoundError(f"MediaPipe models missing: {pose_model}, {hand_model}; run scripts/download_models.py")
     base = mp.tasks.BaseOptions

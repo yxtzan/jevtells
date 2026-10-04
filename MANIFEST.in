@@ -1,0 +1,2 @@
+recursive-include config *.yaml *.md
+recursive-include i18n *.yaml

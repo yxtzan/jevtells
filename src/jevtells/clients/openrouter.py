@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+from ..resources import asset_path
 
 try:  # python-dotenv is a runtime dependency, with a tiny fallback for old envs.
     from dotenv import load_dotenv
@@ -57,7 +58,7 @@ class _BodyReader:
 
 
 def _load_key(env_path: str | Path | None = None) -> str:
-    env_path = Path(env_path) if env_path is not None else Path.cwd() / ".env"
+    env_path = Path(env_path) if env_path is not None else asset_path(".env")
     if load_dotenv is not None:
         # Do not let python-dotenv silently search unrelated parent folders;
         # the project key must come from this checkout's .env.

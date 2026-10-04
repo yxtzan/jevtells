@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from PIL import Image, ImageDraw, ImageFont
+from ..resources import asset_path
 
 
 @dataclass(frozen=True)
@@ -41,17 +42,16 @@ def _line_width(text: str, font: ImageFont.FreeTypeFont, padding: float, quoted:
 
 class Fonts:
     def __init__(self, settings: Mapping[str, Any], scale: float) -> None:
-        self.paths = settings["fonts"]
+        self.paths = {role:asset_path(relative) for role,relative in settings["fonts"].items()}
         self.scale = scale
         self.minimum = float(settings["min_font_ratio"])
-        self.root = Path(__file__).resolve().parents[3]
         for relative in self.paths.values():
-            if not (self.root / relative).exists():
+            if not relative.exists():
                 raise FileNotFoundError(f"render font missing: {relative}; run scripts/download_models.py")
 
     @lru_cache(maxsize=128)
     def get(self, role: str, size: int) -> ImageFont.FreeTypeFont:
-        return ImageFont.truetype(str(self.root / self.paths[role]), max(1, size))
+        return ImageFont.truetype(str(self.paths[role]), max(1, size))
 
     def font(self, role: str, size: float, text: str = "") -> ImageFont.FreeTypeFont:
         if role == "mono" and re.search(r"[\u3400-\u9fff]", text):

@@ -7,10 +7,11 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from .resources import data_path
 
 
 def _path_for(lang: str) -> Path:
-    return Path(__file__).resolve().parents[2] / "i18n" / f"{lang}.yaml"
+    return data_path(f"i18n/{lang}.yaml")
 
 
 def load_translations(lang: str = "zh") -> dict[str, Any]:

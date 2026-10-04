@@ -11,6 +11,7 @@ from ..clients.openrouter import OpenRouterClient
 from ..schemas import Narration
 from . import narrate_facts
 from .narrate_validation import RED_FLAGS as _RED_FLAGS, quote_tokens, validation_errors
+from ..resources import data_path
 
 
 def _content(raw: Mapping[str, Any]) -> str:
@@ -82,7 +83,7 @@ def run(states: Mapping[str, Any] | None, judgments: Mapping[str, Any] | None, o
     settings = (config or {}).get("narrate", {})
     model = str(settings.get("model", "google/gemini-3.1-flash-lite"))
     retries = int(settings.get("validation_retries", 2))
-    template = (Path(__file__).resolve().parents[3] / "config/narrate_prompt.md").read_text(encoding="utf-8")
+    template = data_path("config/narrate_prompt.md").read_text(encoding="utf-8")
     facts_by_id = narrate_facts.run(states, judgments, out, config)
     active_client = client or OpenRouterClient()
     raw_dir = out / "raw"

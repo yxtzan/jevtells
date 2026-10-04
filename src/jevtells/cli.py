@@ -38,6 +38,9 @@ def _targets_changed(output: Path, anchors: list[tuple[int, float]]) -> bool:
 def _arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="jevtells")
     subparsers = parser.add_subparsers(dest="command")
+    doctor_parser=subparsers.add_parser("doctor",help="check Python, ffmpeg, models, fonts and key without writing files")
+    doctor_parser.add_argument("--config")
+    subparsers.add_parser("download",help="download MediaPipe models and OFL fonts to JEVTELLS_HOME or current directory")
 
     people_parser = subparsers.add_parser("people", help="number detected people in a representative frame")
     people_parser.add_argument("input")
@@ -256,6 +259,13 @@ def _finish_run(
 
 def main() -> None:
     arguments = _arguments()
+    if arguments.command=="doctor":
+        from .doctor import run as doctor_run
+        raise SystemExit(doctor_run(load_config(arguments.config)))
+    if arguments.command=="download":
+        from .download import main as download_main
+        download_main()
+        return
     if arguments.command == "people":
         _people_command(arguments)
         return
