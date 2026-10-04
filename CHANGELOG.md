@@ -5,6 +5,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-04
+
+### Added
+
+- OpenRouter client (`clients/openrouter.py`) for Jev decisions and chat models: key read from `.env` only, retries on 429 / 5xx, key redacted from errors, cost recorded per call.
+- `judge` stage: Jev scores confidence, focus and tension, picks intent and emotion, and rates how expressive each gesture is, once per time window.
+- `scene` stage: one-sentence scene description from the middle frame (skipped when `--scene` is given).
+- `narrate` stage: one-line narration and a verbatim quote per window, with tone checks and quote validation.
+- Chinese and English labels (`i18n/`), `--lang zh|en`.
+- `judge_review.md` for reviewing every window by eye; per-stage API calls and cost in `run_meta.json`.
+- Editable `config/jev_questions.yaml` and `config/narrate_prompt.md`; `scripts/jev_smoke.py` for a one-call API check.
+
+### Changed
+
+- `fist` now needs a tightly closed hand and `point` needs the other three fingers curled, so cupped and open hands no longer count.
+- Small motions stay in `actions.json` but are left out of the state sent to Jev.
+- Tracking settings use the same key names as the config file.
+
+### Known issues
+
+- Narration lines are accurate but plain and repetitive; to be rewritten in 0.4.0.
+- Speech by someone other than the target is attributed to the target.
+- In wide shots, a still wrist can drift enough to be reported as a raise.
+
 ## [0.2.0] - 2026-10-03
 
 ### Added
@@ -47,6 +71,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - The voice description covers loudness only.
 - Gesture measurement is a placeholder (wrist travel); gesture labels arrive in 0.2.0.
 
-[Unreleased]: https://github.com/yxtzan/jevtells/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/yxtzan/jevtells/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/yxtzan/jevtells/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/yxtzan/jevtells/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/yxtzan/jevtells/releases/tag/v0.1.0
