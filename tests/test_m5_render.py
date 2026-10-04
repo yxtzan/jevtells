@@ -20,6 +20,24 @@ def test_footer_short_names_match_actual_version_and_strip_unknown_date():
     assert model_short_name("vendor/model-v2", settings) == "model-v2"
 
 
+def test_commentary_height_is_measured_once_for_the_whole_video():
+    from jevtells.i18n import load_translations
+    from jevtells.render.panels import Panels
+    from jevtells.render.text import Fonts
+    settings = load_config()["render"]
+    layout = Layout.create("v", settings, (1280, 720))
+    windows = [{"id": "W0"}, {"id": "W1"}]
+    def panels(lines):
+        return Panels(settings, layout, Fonts(settings, 1), load_translations("zh"), windows, {}, {f"W{i}": {"line": line, "quote": "hello world"} for i, line in enumerate(lines)}, "标题", "来源")
+    short = panels(["双手收拢", "语速改变"])
+    mixed = panels(["双手收拢", "复杂计算架构中的每一个层级都经历了彻底革新并重新构建和改变自身工作方式"])
+    assert short.p["commentary"][3] < mixed.p["commentary"][3] <= 98
+    assert short.p["quote_y"] < mixed.p["quote_y"]
+    assert mixed.commentary(0)[0].height == mixed.commentary(1)[0].height
+    assert mixed.quote(0).getbbox()[1] == mixed.quote(1).getbbox()[1]
+    assert settings["v"]["commentary"][3] == 98
+
+
 def test_run_defaults_to_render_and_state_remains_available(monkeypatch, capsys):
     import sys
     from jevtells.cli import _arguments
