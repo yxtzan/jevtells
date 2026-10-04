@@ -6,7 +6,7 @@ import numpy as np
 from jevtells.config import load_config
 from jevtells.render.labels import schedule
 from jevtells.stages.actions import mark_far
-from jevtells.stages.shots import _framing_boundaries, run, target_bounds
+from jevtells.stages.shots import _framing_boundaries, histogram, run, shoulder_ratios, target_bounds
 from jevtells.stages.state import _actions
 
 
@@ -41,3 +41,23 @@ def test_target_activity_bounds_use_percentiles_visibility_and_padding():
     pose[:, 10, :2] = [1, 1]
     pose[:, 10, 3] = .1
     assert target_bounds({"pose": pose}, 0, 20, 1000, 500, .5, 100, .15) == [485, 235, 515, 265]
+
+
+def test_spatial_histogram_sees_a_cut_between_translated_views():
+    import cv2
+    left = np.zeros((180, 320, 3), dtype=np.uint8)
+    left[:, :160] = [0, 0, 255]
+    right = left[:, ::-1].copy()
+    a, b = histogram(left, {}), histogram(right, {})
+    assert max(cv2.compareHist(x, y, cv2.HISTCMP_BHATTACHARYYA) for x, y in zip(a, b)) > .45
+
+
+def test_shoulder_size_is_translation_invariant_and_rejects_hidden_points():
+    pose = np.full((3, 33, 4), np.nan)
+    pose[:, 11] = [.4, .3, 0, .9]
+    pose[:, 12] = [.6, .3, 0, .9]
+    original = shoulder_ratios({"pose": pose}, 1280, 720, .5)
+    pose[:, :, 0] += .1
+    assert np.allclose(shoulder_ratios({"pose": pose}, 1280, 720, .5), original)
+    pose[0, 12, 3] = .1
+    assert np.isnan(shoulder_ratios({"pose": pose}, 1280, 720, .5)[0])
