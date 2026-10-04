@@ -233,6 +233,14 @@ def _finish_run(
     costs = [float(item["cost"]) for item in api_stats.values() if isinstance(item, Mapping) and item.get("cost") is not None]
     api_stats["total_cost"] = sum(costs) if costs else None
     metadata: dict[str, Any] = {"parameters": vars(arguments), "elapsed_s": time.perf_counter() - started, "stage_times_s": stage_times, "encoding": encoding, "language": transcript.get("language"), "target_anchors": anchors, "duration_s": duration, "occupied_hands": actions_result.get("occupied_hands", {}) if isinstance(actions_result, Mapping) else {}, "api": api_stats}
+    metadata["models_used"] = {}
+    for stage, prefix in (("judge", "jev"), ("narrate", "narrate")):
+        identifiers = set()
+        for path in (output / "raw").glob(f"{prefix}_W*.json"):
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            if raw.get("model"):
+                identifiers.add(str(raw["model"]))
+        metadata["models_used"][stage] = sorted(identifiers)
     render_meta = output / "render_meta.json"
     if render_meta.exists():
         metadata["render"] = json.loads(render_meta.read_text(encoding="utf-8"))

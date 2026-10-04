@@ -121,6 +121,9 @@ stop_on_api_error: true
 
 # Dimensions are CSS/design pixels. Layout.scale multiplies every dimension.
 render:
+  model_names:
+    'typesafe/jev-1.13*': Jev 1.13
+    'google/gemini-3.1-flash-lite*': Gemini Flash Lite
   fps: 30
   crf: 18
   preset: veryfast

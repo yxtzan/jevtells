@@ -10,6 +10,16 @@ from jevtells.render.geometry import Layout
 from jevtells.render.renderer import Composer
 
 
+def test_footer_short_names_match_actual_version_and_strip_unknown_date():
+    from jevtells.render.renderer import model_short_name
+    settings = load_config()["render"]
+    assert model_short_name("typesafe/jev-1.13-20260917", settings) == "Jev 1.13"
+    assert model_short_name("google/gemini-3.1-flash-lite", settings) == "Gemini Flash Lite"
+    assert model_short_name("vendor/model-20261005", settings) == "model"
+    assert model_short_name("vendor/model-2026-10-05", settings) == "model"
+    assert model_short_name("vendor/model-v2", settings) == "model-v2"
+
+
 def test_run_defaults_to_render_and_state_remains_available(monkeypatch, capsys):
     import sys
     from jevtells.cli import _arguments

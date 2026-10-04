@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import fnmatch
 import json
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -194,6 +196,13 @@ class Composer:
         return image.convert("RGB")
 
 
+def model_short_name(identifier: str, settings: Mapping[str, Any]) -> str:
+    for pattern, name in settings.get("model_names", {}).items():
+        if fnmatch.fnmatchcase(identifier, pattern):
+            return str(name)
+    return re.sub(r"-(?:\d{8}|\d{4}-\d{2}-\d{2})$", "", identifier.split("/")[-1])
+
+
 def _sources(out: Path, settings: Mapping[str, Any], config: Mapping[str, Any], lang: str) -> str:
     tr = load_translations(lang)["ui"]
     def model(name: str, fallback: str) -> str:
@@ -203,8 +212,8 @@ def _sources(out: Path, settings: Mapping[str, Any], config: Mapping[str, Any], 
         for raw_path in sorted((out / "raw").glob(f"{prefix}_W*.json")):
             raw = json.loads(raw_path.read_text(encoding="utf-8"))
             if raw.get("model"):
-                return str(raw["model"]).split("/")[-1]
-        return str(value.get("model", fallback)).split("/")[-1]
+                return model_short_name(str(raw["model"]), settings)
+        return model_short_name(str(value.get("model", fallback)), settings)
     return " · ".join((tr["action_source"], tr["judge_source"].format(model=model("judge_meta.json", str(config["jev"]["model"]))), tr["narrate_source"].format(model=model("narrate_meta.json", str(config["narrate"]["model"]))), tr["disclaimer"]))
 
 
