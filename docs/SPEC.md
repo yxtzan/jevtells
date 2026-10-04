@@ -272,6 +272,14 @@ M2 验收后确定的规则（两段测试素材验证过）：
 - 失败处理：指数退避重试 3 次；仍失败则该窗口记为缺失，渲染显示「—」，不中断整体流程。
 - 问题文本放在 `config/jev_questions.yaml`（英文），用户可以自行修改，代码里不写死。
 - 正式实现前，先用 `scripts/jev_smoke.py` 发一次最小请求，核对请求和返回的实际格式。
+- **实测格式（2026-10-04，`typesafe/jev-1.13-20260917`）**：
+  - 请求里 `questions` 是以题目 ID 为键的对象，每题包含 `type`、`instructions`、`criteria`。choice 的 criteria 是「选项键 → 描述」；score 是 5 档描述的数组；noul 是 `{"true": …, "false": …}`。
+  - 返回在 `answers` 下：
+    - choice 返回 `choice`、`probabilities`、`confidence`，选项概率和 confidence 是两个不同的字段。
+    - score 返回连续值 `score`，以及键为 0–4 的 `legend` 和 `probabilities`，归一化方式为 `score / 4`。
+    - noul 的字段名就是 `noul`（为真的概率），**没有** confidence。
+  - 费用在 `usage.cost`。
+- 写解说和场景描述的模型目前用 `google/gemini-3.1-flash-lite`（写在 config）。实测 30 秒片段全部 API 费用约 0.002 美元。
 - 每次调用的原始响应、token 用量和费用都存档；`run_meta.json` 汇总调用次数和总费用。
 
 ## 9. 文本模型（M3）
