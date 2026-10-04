@@ -21,26 +21,52 @@ def _voice_text(voice: dict[str, Any], window: dict[str, Any], transcript: dict[
         return "loudness unknown; unknown pitch variation; speech rate 0.0 words/s; unknown pauses"
 
 
-def _actions(points: dict[str, Any], window: dict[str, Any], actions: dict[str, Any] | None = None) -> list[str]:
+def action_text(event: dict[str, Any]) -> str:
+    """Use one description for state generation and judgment ID matching."""
+    midpoint = float(event.get("mid", event.get("tmid", (float(event.get("t0", 0.0)) + float(event.get("t1", 0.0))) / 2)))
+    limb = event.get("limb", event.get("side", ""))
+    action_type = event.get("type", "gesture")
+    start = float(event.get("start", event.get("t0", midpoint)))
+    end = float(event.get("end", event.get("t1", midpoint)))
+    magnitude = event.get("amplitude", event.get("magnitude"))
+    text = f"{limb}: {action_type}, {max(0.0, end - start):.1f}s"
+    if magnitude is not None and action_type not in {"open_palm", "fist", "point", "palms_up"}:
+        text += f", {magnitude}"
+    return text
+
+
+def _actions(
+    points: dict[str, Any],
+    window: dict[str, Any],
+    actions: dict[str, Any] | None = None,
+    config: dict[str, Any] | None = None,
+) -> list[str]:
     """Read action events for this window, with an explicit empty result."""
 
     if actions is not None:
         events = actions.get("events", actions) if isinstance(actions, dict) else actions
         if isinstance(events, list):
             selected: list[str] = []
+            minimum_motion = "medium"
+            if isinstance(config, dict):
+                candidate = config.get("state_min_motion_magnitude")
+                if candidate is None and isinstance(config.get("actions"), dict):
+                    candidate = config["actions"].get("state_min_motion_magnitude")
+                if isinstance(candidate, str):
+                    minimum_motion = candidate
+            if isinstance(actions, dict) and isinstance(actions.get("state_min_motion_magnitude"), str):
+                minimum_motion = str(actions["state_min_motion_magnitude"])
+            motion_types = {"raise", "press_down", "beat", "spread", "gather", "nod", "shake", "lean_in"}
+            magnitude_rank = {"small": 0, "medium": 1, "large": 2}
             for event in events:
                 try:
                     midpoint = float(event.get("mid", event.get("tmid", (float(event.get("t0", 0.0)) + float(event.get("t1", 0.0))) / 2)))
                     if float(window["t0"]) <= midpoint <= float(window["t1"]):
-                        limb = event.get("limb", event.get("side", ""))
                         action_type = event.get("type", "gesture")
-                        start = float(event.get("start", event.get("t0", midpoint)))
-                        end = float(event.get("end", event.get("t1", midpoint)))
                         magnitude = event.get("amplitude", event.get("magnitude"))
-                        if magnitude is None or action_type in {"open_palm", "fist", "point", "palms_up"}:
-                            selected.append(f"{limb}: {action_type}, {max(0.0, end - start):.1f}s")
-                        else:
-                            selected.append(f"{limb}: {action_type}, {max(0.0, end - start):.1f}s, {magnitude}")
+                        if action_type in motion_types and magnitude_rank.get(str(magnitude), 0) < magnitude_rank.get(minimum_motion, 1):
+                            continue
+                        selected.append(action_text(event))
                 except (TypeError, ValueError, AttributeError):
                     continue
             return selected or ["no notable gestures"]
@@ -91,7 +117,7 @@ def run(
     states: dict[str, Any] = {}
     measured_points = points or {"t": [], "pose": np.empty((0, 33, 4))}
     for window in windows:
-        state = State(scene=scene, speaker=speaker, subtitle={"current": window["subtitle"], "previous": window.get("prev_subtitle", "")}, voice=_voice_text(voice, window, transcript, config), measured_actions=_actions(measured_points, window, actions))
+        state = State(scene=scene, speaker=speaker, subtitle={"current": window["subtitle"], "previous": window.get("prev_subtitle", "")}, voice=_voice_text(voice, window, transcript, config), measured_actions=_actions(measured_points, window, actions, config))
         states[window["id"]] = state.model_dump()
     destination.write_text(json.dumps(states, ensure_ascii=False, indent=2), encoding="utf-8")
     return states

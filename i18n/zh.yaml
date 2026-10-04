@@ -1,0 +1,41 @@
+actions:
+  raise: 抬手
+  press_down: 下压
+  open_palm: 张开手掌
+  palms_up: 摊手
+  point: 指点
+  fist: 握拳
+  spread: 双手展开
+  gather: 双手收拢
+  beat: 节拍强调
+  nod: 点头
+  shake: 摇头
+  lean_in: 前倾
+intents:
+  state_position: 陈述立场
+  explain: 解释说明
+  give_example: 举例
+  tell_story: 讲述经历
+  emphasize: 强调重点
+  respond_challenge: 回应质疑
+  deflect: 回避转移
+  humor: 幽默自嘲
+  ask: 提问反问
+  transition: 过渡铺垫
+emotions:
+  calm: 平静
+  firm: 坚定
+  excited: 兴奋
+  warm: 温和
+  serious: 严肃
+  tense: 紧张
+  relaxed: 轻松
+scores:
+  confidence: 自信
+  focus: 专注
+  tension: 紧张
+ui:
+  disclaimer: 未经人工校准 · 仅供演示
+  source: 来源：JevTells + OpenRouter
+  unknown: 未知
+  missing: —

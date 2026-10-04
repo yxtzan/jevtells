@@ -25,6 +25,9 @@ DEFAULT_RULE_CONFIG: dict[str, Any] = {
     "min_action_duration": 0.2,
     "movement_threshold": 0.12,
     "state_threshold": 0.65,
+    "fist_max_openness": 0.20,
+    "fist_max_tip_palm_ratio": 1.00,
+    "point_frame_ratio": 0.80,
     "max_per_window": 4,
     "merge_gap": 0.20,
     "small_threshold": 0.15,
@@ -87,6 +90,20 @@ def _runs(mask: np.ndarray, times: np.ndarray, min_duration: float) -> list[tupl
     return [(int(start), int(end)) for start, end in zip(starts, ends) if float(times[end] - times[start]) >= float(min_duration)]
 
 
+def _tolerant_runs(mask: np.ndarray, times: np.ndarray, min_duration: float, merge_gap: float) -> list[tuple[int, int]]:
+    """Group state runs separated by a short detector flicker."""
+    runs = _runs(mask, times, min_duration)
+    if not runs:
+        return []
+    merged: list[list[int]] = [[runs[0][0], runs[0][1]]]
+    for start, end in runs[1:]:
+        if float(times[start] - times[merged[-1][1]]) <= float(merge_gap):
+            merged[-1][1] = end
+        else:
+            merged.append([start, end])
+    return [(start, end) for start, end in merged]
+
+
 def _event(event_type: str, side: str, t0: float, t1: float, amplitude: float | None, params: Mapping[str, Any], settings: Mapping[str, Any]) -> dict[str, Any]:
     magnitude = None if event_type in SHAPE_TYPES else _magnitude(float(amplitude or 0.0), settings)
     return {"id": "", "t0": float(t0), "t1": float(t1), "tmid": float((t0 + t1) / 2), "type": event_type, "side": side, "magnitude": magnitude, "params": dict(params)}
@@ -122,6 +139,63 @@ def _hand_shape_valid(features: Mapping[str, Any], times: np.ndarray, event: Map
     required = float(settings["hand_detection_ratio"])
     frame_threshold = float(settings["hand_point_frame_ratio"])
     return all(side < ratios.shape[1] and float(np.mean(ratios[indices, side] >= frame_threshold)) >= required for side in _sides(event))
+
+
+def _fist_valid(features: Mapping[str, Any], times: np.ndarray, event: Mapping[str, Any], settings: Mapping[str, Any]) -> bool:
+    """Require a closed hand and all four fingertips within the palm."""
+    indices = _span(times, float(event["t0"]), float(event["t1"]))
+    if not len(indices):
+        return False
+    openness = _array(features, "hand_open")
+    palm_ratio = _array(features, "fingertip_palm_ratio")
+    # Older synthetic callers only provided ``hand_open``.  Keep that input
+    # usable while real extracted features always include the geometry check.
+    if palm_ratio.ndim != 3 or palm_ratio.shape[2] < 4:
+        return all(
+            side < openness.shape[1]
+            and float(np.nanmean(openness[indices, side])) <= float(settings["fist_max_openness"])
+            for side in _sides(event)
+        )
+    for side in _sides(event):
+        if side >= palm_ratio.shape[1] or side >= openness.shape[1]:
+            return False
+        closed = np.isfinite(openness[indices, side]) & (openness[indices, side] <= float(settings["fist_max_openness"]))
+        near_palm = np.isfinite(palm_ratio[indices, side, :4]).all(axis=1) & np.all(
+            palm_ratio[indices, side, :4] <= float(settings["fist_max_tip_palm_ratio"]), axis=1
+        )
+        if not np.all(closed & near_palm):
+            return False
+    return True
+
+
+def _point_condition(features: Mapping[str, Any], settings: Mapping[str, Any]) -> np.ndarray:
+    """Return per-frame, per-hand index-point geometry validity."""
+    straight = _array(features, "finger_straight")
+    if straight.ndim != 3 or straight.shape[2] < 4:
+        return np.asarray([], dtype=bool)
+    index_extended = straight[:, :, 0] >= float(settings["state_threshold"])
+    tip_dist = _array(features, "finger_tip_wrist_distance")
+    root_dist = _array(features, "finger_root_wrist_distance")
+    if tip_dist.ndim == 3 and root_dist.ndim == 3 and tip_dist.shape[2] >= 4 and root_dist.shape[2] >= 4:
+        curled = np.isfinite(tip_dist[:, :, 1:4]) & np.isfinite(root_dist[:, :, 1:4])
+        curled &= tip_dist[:, :, 1:4] < root_dist[:, :, 1:4]
+        return index_extended & np.all(curled, axis=2)
+    # Compatibility for hand-crafted feature dictionaries from M2 tests.
+    other = straight[:, :, 1:]
+    finite = np.sum(np.isfinite(other), axis=2)
+    other_mean = np.divide(np.nansum(other, axis=2), finite, out=np.full(index_extended.shape, np.nan), where=finite > 0)
+    return index_extended & (other_mean <= 1.0 - float(settings["state_threshold"]))
+
+
+def _point_valid(features: Mapping[str, Any], times: np.ndarray, event: Mapping[str, Any], settings: Mapping[str, Any]) -> bool:
+    condition = _point_condition(features, settings)
+    indices = _span(times, float(event["t0"]), float(event["t1"]))
+    if condition.ndim != 2 or not len(indices):
+        return False
+    for side in _sides(event):
+        if side >= condition.shape[1] or float(np.mean(condition[indices, side])) < float(settings["point_frame_ratio"]):
+            return False
+    return True
 
 
 def _occupied(features: Mapping[str, Any], times: np.ndarray, event: Mapping[str, Any], settings: Mapping[str, Any]) -> bool:
@@ -176,28 +250,26 @@ def _state_events(features: Mapping[str, Any], times: np.ndarray, settings: Mapp
     events: list[dict[str, Any]] = []
     for side, name in enumerate(("left hand", "right hand")):
         valid_open = np.isfinite(openness[:, side])
-        for state_name, state_mask in (("open_palm", openness[:, side] >= float(settings["state_threshold"])), ("fist", openness[:, side] <= 1.0 - float(settings["state_threshold"]))):
+        for state_name, state_mask in (("open_palm", openness[:, side] >= float(settings["state_threshold"])), ("fist", openness[:, side] <= float(settings["fist_max_openness"]))):
             posture = _posture_mask(valid_open & state_mask, times, settings)
-            for start, end in _runs(valid_open & state_mask, times, float(settings["min_action_duration"])):
+            runs = _tolerant_runs(valid_open & state_mask, times, float(settings["min_action_duration"]), float(settings["merge_gap"])) if state_name == "fist" else _runs(valid_open & state_mask, times, float(settings["min_action_duration"]))
+            for start, end in runs:
                 if np.any(posture[max(0, start - int(float(settings["posture_window"]) * float(features.get("fps", 30.0)) / 2)) : min(len(posture), end + 1 + int(float(settings["posture_window"]) * float(features.get("fps", 30.0)) / 2))]):
                     continue
                 event = _event(state_name, name, times[start], times[end], None, {"open_score": float(np.nanmean(openness[start : end + 1, side]))}, settings)
-                if _hand_shape_valid(features, times, event, settings):
+                if state_name != "fist" or (_fist_valid(features, times, event, settings) and _hand_shape_valid(features, times, event, settings)):
                     events.append(event)
     straight = _array(features, "finger_straight")
-    if straight.ndim == 3 and straight.shape[2] >= 5:
+    if straight.ndim == 3 and straight.shape[2] >= 4:
         for side, name in enumerate(("left hand", "right hand")):
-            other_values = straight[:, side, 1:]
-            other_counts = np.sum(np.isfinite(other_values), axis=1)
-            other_fingers = np.divide(np.nansum(other_values, axis=1), other_counts, out=np.full(len(other_values), np.nan), where=other_counts > 0)
-            point = (straight[:, side, 0] >= float(settings["state_threshold"])) & (other_fingers <= 1.0 - float(settings["state_threshold"]))
+            point = _point_condition(features, settings)[:, side]
             point = np.nan_to_num(point, nan=False)
             posture = _posture_mask(point, times, settings)
-            for start, end in _runs(point, times, float(settings["min_action_duration"])):
+            for start, end in _tolerant_runs(point, times, float(settings["min_action_duration"]), float(settings["merge_gap"])):
                 if np.any(posture[max(0, start - int(float(settings["posture_window"]) * float(features.get("fps", 30.0)) / 2)) : min(len(posture), end + 1 + int(float(settings["posture_window"]) * float(features.get("fps", 30.0)) / 2))]):
                     continue
                 event = _event("point", name, times[start], times[end], None, {"index_extended": True}, settings)
-                if _hand_shape_valid(features, times, event, settings):
+                if _point_valid(features, times, event, settings) and _hand_shape_valid(features, times, event, settings):
                     events.append(event)
     palm = _array(features, "palm_up_score")
     vertical_cos = _array(features, "finger_vertical_cos")
@@ -300,11 +372,18 @@ def _merge(events: Sequence[dict[str, Any]], settings: Mapping[str, Any]) -> lis
 
 def _filter_shape_quality(events: Sequence[dict[str, Any]], features: Mapping[str, Any], times: np.ndarray, settings: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Recheck hand-point coverage over the final merged event span."""
-    return [
-        event
-        for event in events
-        if event["type"] not in SHAPE_TYPES or _hand_shape_valid(features, times, event, settings)
-    ]
+    kept: list[dict[str, Any]] = []
+    for event in events:
+        event_type = event["type"]
+        if event_type == "fist":
+            valid = _fist_valid(features, times, event, settings)
+        elif event_type == "point":
+            valid = _point_valid(features, times, event, settings) and _hand_shape_valid(features, times, event, settings)
+        else:
+            valid = event_type not in SHAPE_TYPES or _hand_shape_valid(features, times, event, settings)
+        if valid:
+            kept.append(event)
+    return kept
 
 
 def _filter_occupied(events: Sequence[dict[str, Any]], features: Mapping[str, Any], times: np.ndarray, settings: Mapping[str, Any]) -> list[dict[str, Any]]:

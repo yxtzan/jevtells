@@ -3,7 +3,6 @@ max_fps: 30
 max_width: 1920
 min_window: 2.0
 max_window: 5.0
-scene: unknown
 
 video:
   max_fps: 30
@@ -13,6 +12,17 @@ models:
   whisper: small
   pose: pose_landmarker_full.task
   hands: hand_landmarker.task
+
+jev:
+  model: typesafe/jev-1.13
+
+scene:
+  auto: true
+  model: google/gemini-3.1-flash-lite
+
+narrate:
+  model: google/gemini-3.1-flash-lite
+  max_tokens: 120
 
 detection:
   max_people: 4
@@ -64,6 +74,9 @@ actions:
   min_action_duration: 0.20
   movement_threshold: 0.12
   state_threshold: 0.65
+  fist_max_openness: 0.20
+  fist_max_tip_palm_ratio: 1.00
+  point_frame_ratio: 0.80
   max_per_window: 4
   merge_gap: 0.20
   small_threshold: 0.15
@@ -72,6 +85,10 @@ actions:
   palms_up_max_vertical_cos: 0.70710678
   palms_up_min_nose_offset: 0.30
   hand_point_frame_ratio: 1.0
+
+# Motion below this magnitude remains in actions.json but is omitted from
+# the measured_actions text sent to Jev.
+state_min_motion_magnitude: medium
 
 lean_in:
   enabled: false
