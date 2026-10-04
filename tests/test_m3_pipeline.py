@@ -147,7 +147,7 @@ def test_cli_cache_from_stage_and_language_do_not_repeat_unrelated_api_calls(tmp
     monkeypatch.setattr(cli.asr, "run", lambda *a, **kw: {"language": "en", "segments": []})
     monkeypatch.setattr(cli.voice, "run", lambda *a, **kw: {})
     monkeypatch.setattr(cli.shots, "run", lambda *a, **kw: [])
-    monkeypatch.setattr(cli.segment, "run", lambda *a, **kw: [{"id": "W00", "t0": 0.0, "t1": 2.0, "subtitle": "Hello."}])
+    monkeypatch.setattr(cli.segment, "run", lambda *a, **kw: [{"id": "W00", "t0": 0.0, "t1": 2.0, "subtitle": "Hello world.", "speaker_other": False}])
     monkeypatch.setattr(cli, "_run_actions", lambda *a, **kw: {"events": []})
     monkeypatch.setattr(cli.debug, "run", lambda *a, **kw: None)
     monkeypatch.setattr(cli, "_video_duration", lambda *a: 0.0)
@@ -160,7 +160,7 @@ def test_cli_cache_from_stage_and_language_do_not_repeat_unrelated_api_calls(tmp
         def chat(self, messages, model, **kwargs):
             stage = "scene" if kwargs.get("images") else "narrate"
             calls.append(stage)
-            text = "An indoor room with a fixed camera." if stage == "scene" else json.dumps({"line": "The speaker explains the current point." if "Language: English" in messages[0]["content"] else "说话人解释当前话题。", "quote": "Hello."}, ensure_ascii=False)
+            text = "An indoor room with a fixed camera." if stage == "scene" else json.dumps({"line": "Words introduce the current point" if 'Write "line" in English' in messages[0]["content"] else "继续解释当前话题", "quote": "Hello world"}, ensure_ascii=False)
             return {"raw": {"choices": [{"message": {"content": text}}]}, "usage": {"prompt_tokens": 10, "completion_tokens": 7}, "cost": 0.002}
     for module in (judge, scene, narration_stage):
         monkeypatch.setattr(module, "OpenRouterClient", Client)
@@ -176,7 +176,7 @@ def test_cli_cache_from_stage_and_language_do_not_repeat_unrelated_api_calls(tmp
     cli.main()
     assert calls == ["scene", "judge", "narrate", "judge", "narrate", "narrate"]
     folder = tmp_path / "work" / "clip_s0_dauto"
-    assert json.loads((folder / "narration.json").read_text())["W00"]["line"].startswith("The speaker")
+    assert json.loads((folder / "narration.json").read_text())["W00"]["line"].startswith("Words")
     meta = json.loads((folder / "run_meta.json").read_text())["api"]
     assert meta["scene"]["calls"] == 1
     assert meta["scene"]["prompt_tokens"] == 10

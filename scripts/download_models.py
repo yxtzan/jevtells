@@ -1,4 +1,4 @@
-"""Download the MediaPipe models and the Chinese font required by M1."""
+"""Download model assets and the OFL fonts used by the renderers."""
 
 from pathlib import Path
 from urllib.request import Request, urlopen
@@ -8,6 +8,14 @@ ASSETS = {
     "models/pose_landmarker_full.task": "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task",
     "models/hand_landmarker.task": "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task",
     "assets/fonts/NotoSansCJKsc-Regular.otf": "https://raw.githubusercontent.com/notofonts/noto-cjk/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf",
+    "assets/fonts/NotoSansCJKsc-Bold.otf": "https://raw.githubusercontent.com/notofonts/noto-cjk/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Bold.otf",
+    "assets/fonts/NotoSansCJKsc-Black.otf": "https://raw.githubusercontent.com/notofonts/noto-cjk/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Black.otf",
+    "assets/fonts/NotoSerifCJKsc-Bold.otf": "https://raw.githubusercontent.com/notofonts/noto-cjk/main/Serif/OTF/SimplifiedChinese/NotoSerifCJKsc-Bold.otf",
+    "assets/fonts/NotoSerifCJKsc-Black.otf": "https://raw.githubusercontent.com/notofonts/noto-cjk/main/Serif/OTF/SimplifiedChinese/NotoSerifCJKsc-Black.otf",
+    "assets/fonts/NotoSansMono-Regular.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/notosansmono/NotoSansMono%5Bwdth,wght%5D.ttf",
+    "assets/fonts/NotoCJK-LICENSE.txt": "https://raw.githubusercontent.com/notofonts/noto-cjk/main/Sans/LICENSE",
+    "assets/fonts/NotoSerifCJK-LICENSE.txt": "https://raw.githubusercontent.com/notofonts/noto-cjk/main/Serif/LICENSE",
+    "assets/fonts/NotoSansMono-OFL.txt": "https://raw.githubusercontent.com/google/fonts/main/ofl/notosansmono/OFL.txt",
 }
 
 def download_file(relative_path: str, url: str) -> None:

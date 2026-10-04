@@ -39,3 +39,38 @@ ui:
   source: "Source: JevTells + OpenRouter"
   unknown: unknown
   missing: —
+  brand: JevTells · Body language
+  title: 'AI reads {speaker}'
+  waiting: Waiting for the first sentence…
+  other_speaker: (Another speaker; no judgment)
+  other_legend: other speaker
+  locked: target locked
+  lost: target lost
+  status: '{time:.1f}s · window {index}/{total} · {target}'
+  quote: Quote
+  intent: Intent
+  emotion: Emotion
+  certainty: confidence {value}
+  card_title: JEV JUDGMENT
+  card_source: words+voice+motion
+  magnitude: '{value} amplitude'
+  expressive: expressive {value}
+  action_source: Motion MediaPipe
+  judge_source: Judgment {model}
+  narrate_source: Narration {model}
+facts:
+  scores:
+    confidence: confidence
+    focus: focus
+    tension: tension
+  limbs:
+    left_hand: left hand
+    right_hand: right hand
+    both_hands: both hands
+    head: ''
+    body: body
+  simultaneous: ' simultaneously '
+  magnitudes:
+    small: small
+    medium: medium
+    large: large

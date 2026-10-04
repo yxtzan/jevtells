@@ -14,11 +14,14 @@ from typing import Any, Mapping
 import cv2
 
 from .config import load_config
+from . import render
+from .render.geometry import parse_blurs
+from .stages.speakers import mark_windows, parse_intervals
 from .stages import asr, debug, judge, narrate, people, pose, prepare, review, scene as scene_stage, segment, shots, state, track, voice
 
 
-_STAGE_ORDER = ("prepare", "pose", "people", "track", "asr", "voice", "shots", "segment", "actions", "scene", "state", "debug", "judge", "narrate")
-_TARGET_STAGES = {"track", "shots", "segment", "actions", "state", "debug", "judge", "narrate"}
+_STAGE_ORDER = ("prepare", "pose", "people", "track", "asr", "voice", "shots", "segment", "actions", "scene", "state", "debug", "judge", "narrate", "render")
+_TARGET_STAGES = {"track", "shots", "segment", "actions", "state", "debug", "judge", "narrate", "render"}
 
 
 def _targets_changed(output: Path, anchors: list[tuple[int, float]]) -> bool:
@@ -53,10 +56,15 @@ def _arguments() -> argparse.Namespace:
     run_parser.add_argument("--start", type=float, default=0.0)
     run_parser.add_argument("--duration", type=float)
     run_parser.add_argument("--force", action="store_true")
-    run_parser.add_argument("--until", default="state", choices=("prepare", "pose", "people", "track", "asr", "voice", "shots", "segment", "actions", "scene", "state", "debug", "judge", "narrate"))
+    run_parser.add_argument("--until", default="state", choices=_STAGE_ORDER)
     run_parser.add_argument("--from", dest="from_stage", choices=_STAGE_ORDER)
     run_parser.add_argument("--target", action="append", default=[], metavar="N@SECONDS", help="target person number at a time anchor; repeat for cuts")
     run_parser.add_argument("--config")
+    run_parser.add_argument("--others-speaking", action="append", default=[], metavar="START-END")
+    run_parser.add_argument("--blur", action="append", default=[], metavar="X,Y,W,H")
+    run_parser.add_argument("--subtitles", choices=("on", "off"), default="on")
+    run_parser.add_argument("--layout", choices=("h", "v", "both"), default="both")
+    run_parser.add_argument("--title")
     return parser.parse_args()
 
 
@@ -217,7 +225,7 @@ def _finish_run(
         if path.exists():
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
-                api_stats[name] = {key: payload.get(key) for key in ("calls", "prompt_tokens", "completion_tokens", "cost", "model", "failed") if key in payload}
+                api_stats[name] = {key: payload.get(key) for key in ("calls", "prompt_tokens", "completion_tokens", "cost", "model", "failed", "retries", "fallbacks", "skipped", "windows") if key in payload}
                 if name == "scene" and "model" in payload:
                     api_stats[name]["cost"] = payload.get("cost")
             except (OSError, ValueError, TypeError):
@@ -225,8 +233,13 @@ def _finish_run(
     costs = [float(item["cost"]) for item in api_stats.values() if isinstance(item, Mapping) and item.get("cost") is not None]
     api_stats["total_cost"] = sum(costs) if costs else None
     metadata: dict[str, Any] = {"parameters": vars(arguments), "elapsed_s": time.perf_counter() - started, "stage_times_s": stage_times, "encoding": encoding, "language": transcript.get("language"), "target_anchors": anchors, "duration_s": duration, "occupied_hands": actions_result.get("occupied_hands", {}) if isinstance(actions_result, Mapping) else {}, "api": api_stats}
+    render_meta = output / "render_meta.json"
+    if render_meta.exists():
+        metadata["render"] = json.loads(render_meta.read_text(encoding="utf-8"))
+    metadata["narration_retries"] = api_stats.get("narrate", {}).get("retries", 0)
+    metadata["narration_fallbacks"] = api_stats.get("narrate", {}).get("fallbacks", 0)
     (output / "run_meta.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
-    if arguments.output and (output / "debug.mp4").exists():
+    if arguments.output and arguments.until != "render" and (output / "debug.mp4").exists():
         Path(arguments.output).write_bytes((output / "debug.mp4").read_bytes())
     print(f"output={output} windows={len(windows)} elapsed={metadata['elapsed_s']:.1f}s total_cost={api_stats['total_cost']}")
 
@@ -248,13 +261,43 @@ def main() -> None:
     output = Path(arguments.output).parent if arguments.output else Path("work") / clip_id
     output.mkdir(parents=True, exist_ok=True)
     targets_changed = _targets_changed(output, anchors)
+    intervals = parse_intervals(getattr(arguments, "others_speaking", []))
+    blur_rectangles = parse_blurs(getattr(arguments, "blur", []))
+    others_changed = False
 
     def force_stage(stage: str) -> bool:
         rerun_from = arguments.from_stage
-        return bool(arguments.force or (rerun_from and _STAGE_ORDER.index(stage) >= _STAGE_ORDER.index(rerun_from)) or (targets_changed and stage in _TARGET_STAGES))
+        return bool(arguments.force or (rerun_from and _STAGE_ORDER.index(stage) >= _STAGE_ORDER.index(rerun_from)) or (targets_changed and stage in _TARGET_STAGES) or (others_changed and stage in {"judge", "narrate", "render"}))
 
     started = time.perf_counter()
     stage_times: dict[str, float] = {}
+
+    def render_clip(clip: Path, windows: list[dict[str, Any]], points: dict[str, Any]) -> None:
+        capture = cv2.VideoCapture(str(input_path))
+        source_size = (int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)), int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+        capture.release()
+        stage_start = time.perf_counter()
+        render.run(clip, output, windows, points, config=config, speaker=arguments.speaker, lang=arguments.lang, title=getattr(arguments, "title", None), layout=getattr(arguments, "layout", "both"), blur=blur_rectangles, subtitles=getattr(arguments, "subtitles", "on") == "on", source_size=source_size, force=force_stage("render"))
+        stage_times["render"] = time.perf_counter() - stage_start
+
+    if arguments.from_stage == "render":
+        if arguments.until != "render":
+            raise ValueError("--from render requires --until render")
+        if targets_changed:
+            raise ValueError("target anchors changed; rerun from track before rendering")
+        def read_cache(name: str) -> Any:
+            return json.loads((output / name).read_text(encoding="utf-8"))
+        windows = read_cache("windows.json")
+        marked = mark_windows(windows, intervals, float(config.get("other_speaker_overlap", 0.5)))
+        if marked != windows:
+            raise ValueError("other-speaker intervals changed; rerun from judge before rendering")
+        narration_meta = read_cache("narrate_meta.json")
+        if narration_meta.get("lang") != arguments.lang:
+            raise ValueError("narration language changed; rerun from narrate before rendering")
+        clip = output / "clip.mp4"
+        render_clip(clip, windows, _load_npz(output / "keypoints.npz"))
+        _finish_run(arguments, output, clip, {"stage": "render"}, read_cache("transcript.json"), anchors, read_cache("actions.json"), started, stage_times, windows)
+        return
 
     stage_start = time.perf_counter()
     clip, audio, encoding = _invoke(prepare.run, input_path, output, force_stage("prepare"), arguments.start, arguments.duration, config=config)
@@ -311,6 +354,11 @@ def main() -> None:
         return
     stage_start = time.perf_counter()
     windows = _invoke(segment.run, transcript, shot_list, output, force_stage("segment"), config=config)
+    marked = mark_windows(windows, intervals, float(config.get("other_speaker_overlap", 0.5)))
+    others_changed = marked != windows
+    if others_changed:
+        windows = marked
+        (output / "windows.json").write_text(json.dumps(windows, ensure_ascii=False, indent=2), encoding="utf-8")
     stage_times["segment"] = time.perf_counter() - stage_start
     if arguments.until == "segment":
         return
@@ -350,6 +398,8 @@ def main() -> None:
     narration = _invoke(narrate.run, states, judgments, output, force_stage("narrate"), config=config, lang=arguments.lang)
     stage_times["narrate"] = time.perf_counter() - stage_start
     review.write(states, judgments, narration, output, lang=arguments.lang)
+    if arguments.until == "render":
+        render_clip(clip, windows, points)
     finish()
 
 

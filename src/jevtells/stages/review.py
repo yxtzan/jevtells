@@ -19,9 +19,12 @@ def write(states: Mapping[str, Any], judgments: Mapping[str, Any], narration: Ma
     lines = ["# Judge review", "", "| window | time | subtitle | measured_actions | voice | confidence | focus | tension | intent (confidence) | emotion (confidence) | narration | quote |", "|---|---:|---|---|---|---:|---:|---:|---|---|---|---|"]
     windows_path = Path(out) / "windows.json"
     windows = {str(item.get("id")): item for item in json.loads(windows_path.read_text(encoding="utf-8"))} if windows_path.exists() else {}
+    facts_path, meta_path = Path(out) / "narrate_facts.json", Path(out) / "narrate_meta.json"
+    facts = json.loads(facts_path.read_text(encoding="utf-8")) if facts_path.exists() else {}
+    meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
     for window_id, state in states.items():
-        judgment = judgments.get(window_id, {}) if isinstance(judgments, Mapping) else {}
-        line = narration.get(window_id, {}) if isinstance(narration, Mapping) else {}
+        judgment = (judgments.get(window_id) or {}) if isinstance(judgments, Mapping) else {}
+        line = (narration.get(window_id) or {}) if isinstance(narration, Mapping) else {}
         window = windows.get(str(window_id), {})
         intent = judgment.get("intent") if isinstance(judgment, Mapping) else None
         emotion = judgment.get("emotion") if isinstance(judgment, Mapping) else None
@@ -32,6 +35,12 @@ def write(states: Mapping[str, Any], judgments: Mapping[str, Any], narration: Ma
         voice = str(state.get("voice", "")) if isinstance(state, Mapping) else ""
         safe = lambda value: str(value).replace("|", "\\|").replace("\n", " ")
         lines.append("| " + " | ".join((safe(window_id), f"{float(window.get('t0', 0.0)):.2f}–{float(window.get('t1', 0.0)):.2f}s", safe(subtitle), safe(actions), safe(voice), _score(judgment, "confidence"), _score(judgment, "focus"), _score(judgment, "tension"), safe(intent_text), safe(emotion_text), safe(line.get("line", "—")), safe(line.get("quote", "—")))) + " |")
+    lines += ["", "## Commentary facts and validation", "", "| window | speaker_other | highlights | retries | fallback | failure reasons |", "|---|---|---|---:|---|---|"]
+    for identifier in states:
+        item = meta.get("windows", {}).get(identifier, {})
+        safe = lambda value: str(value).replace("|", "\\|").replace("\n", " ")
+        reasons = meta.get("skipped", {}).get(identifier, item.get("failures", []))
+        lines.append("| " + " | ".join(map(safe, (identifier, windows.get(identifier, {}).get("speaker_other", False), "; ".join(facts.get(identifier, {}).get("highlights", [])), item.get("retries", 0), item.get("fallback", False), reasons))) + " |")
     destination.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return destination
 

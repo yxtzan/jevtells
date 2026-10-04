@@ -23,6 +23,12 @@ scene:
 narrate:
   model: google/gemini-3.1-flash-lite
   max_tokens: 120
+  validation_retries: 2
+  facts:
+    delta_threshold: 0.08
+    trend_deltas: 2
+    epsilon: 0.000000001
+    min_extrema_windows: 2
 
 detection:
   max_people: 4
@@ -109,3 +115,201 @@ colors:
   other: '#A0A7B4'
   text: '#FFFFFF'
   background: '#121212'
+
+other_speaker_overlap: 0.5
+stop_on_api_error: true
+
+# Dimensions are CSS/design pixels. Layout.scale multiplies every dimension.
+render:
+  fps: 30
+  crf: 18
+  preset: veryfast
+  bitrate: 8M
+  blur_radius: 18
+  subtitle_exclusion_ratio: 0.20
+  min_font_ratio: 0.80
+  gap_opacity: 0.55
+  panel_opacity: 0.92
+  footer_opacity: 0.82
+  choice_width_ratio: 0.80
+  label_types: [raise, press_down, open_palm, spread, gather, beat, nod, shake]
+  colors:
+    ink: '#0B0B0B'
+    lime: '#C8FF2E'
+    fg: '#FFFFFF'
+    muted: '#9A9A9A'
+    track: '#262626'
+    blue: '#4C82FF'
+    red: '#FF5A5A'
+    up: '#3DDC84'
+    secondary_bar: '#4A4A4A'
+    hair: '#D9D9D9'
+    baseline: '#363636'
+    stripe: '#3A3A3A'
+    emotions:
+      firm: '#2F6BFF'
+      excited: '#FF9F1C'
+      serious: '#8B5CF6'
+      calm: '#14C38E'
+      tense: '#FF5A5A'
+      warm: '#F7C948'
+      relaxed: '#7FD1FF'
+  fonts:
+    sans: assets/fonts/NotoSansCJKsc-Bold.otf
+    sans_black: assets/fonts/NotoSansCJKsc-Black.otf
+    serif: assets/fonts/NotoSerifCJKsc-Bold.otf
+    serif_black: assets/fonts/NotoSerifCJKsc-Black.otf
+    mono: assets/fonts/NotoSansMono-Regular.ttf
+  animation:
+    number_seconds: 0.30
+    spark_seconds: 0.30
+    commentary_in_seconds: 0.25
+    commentary_out_seconds: 0.15
+    commentary_offset: 12
+    label_in_seconds: 0.15
+    label_hold_seconds: 0.80
+    label_out_seconds: 0.20
+    label_start_scale: 0.90
+  label:
+    padding: [16, 6]
+    badge_padding: [10, 2]
+    badge_indent: 10
+    gap: 5
+    leader_fraction: 0.35
+    leader_width: 3.5
+    point_radius: 9
+    point_outline: 2.5
+    head_point: 0
+    wrist_points: [15, 16]
+    palm_points: [0, 5, 9, 13, 17]
+  components:
+    hair_width: 1.5
+    footer_width: 1
+    heading_gap: 10
+    letter_spacing: 3
+    number_top: 8
+    number_bottom: 10
+    spark_padding: 4
+    spark_min_span: 0.30
+    spark_domain_padding: 0.10
+    spark_baseline: 1
+    spark_line: 2.5
+    spark_dot: 6
+    spark_outline: 2.5
+    stripe_step: 8
+    stripe_width: 3
+    arc_gap: 4
+    arc_outline: 3
+    arc_outline_offset: 2
+    bar_gap: 6
+    bar_height: 10
+    bar_label_em: 4.5
+    bar_value_em: 2.6
+    bar_inner_gap: 10
+    legend_gap: 14
+    legend_square: 10
+    legend_inner_gap: 5
+    legend_top: 8
+    quote_gap: 12
+    quote_tag_size: 16
+    tag_padding: [8, 2]
+    highlight_padding: 4
+    line_height: 1.35
+    shadow_offset: 6
+    shadow_radius: 8
+  subtitles:
+    size: 26
+    bottom: 22
+    padding: [14, 6]
+    max_width_ratio: 0.84
+  v:
+    design: [1080, 1440]
+    output: [1080, 1440]
+    video: [0, 196, 1080, 608]
+    title: [48, 48, 984, 80]
+    title_size: 48
+    title_padding: [14, 4]
+    brand_gap: 14
+    brand_size: 20
+    status: [48, 150, 984, 28]
+    status_size: 16
+    status_padding: [10, 3]
+    commentary: [48, 830, 984, 98]
+    commentary_size: 36
+    commentary_gap: 16
+    index_size: 18
+    index_top: 8
+    quote_y: 940
+    quote_size: 21
+    metrics_y: 991
+    metrics_gap: 28
+    metric_label_size: 17
+    number_size: 58
+    number_top: 23
+    spark: [300, 54]
+    lower_y: 1181
+    lower_gap: 40
+    choice_size: 38
+    choice_heading_size: 17
+    choice_top: 20
+    choice_bottom: 6
+    arc_top: 14
+    arc_height: 22
+    legend_size: 14
+    label_slots: [[28, 300], [800, 300]]
+    label_width: 250
+    label_size: 28
+    badge_size: 17
+    footer: [48, 1392, 984, 48]
+    footer_size: 15
+    footer_top: 10
+  h:
+    design: [1280, 720]
+    output: [1920, 1080]
+    video: [0, 0, 1280, 720]
+    commentary: [32, 22, 900, 47]
+    commentary_size: 20
+    commentary_padding: [14, 9]
+    commentary_gap: 12
+    index_size: 12
+    index_top: 0
+    quote_y: 80
+    quote_size: 14
+    quote_padding: [10, 6]
+    quote_tag_size: 11
+    card: [968, 160, 280, 340]
+    card_padding: 12
+    card_border: 3
+    card_title_size: 13
+    card_source_size: 10
+    metrics_y: 205
+    metrics_gap: 10
+    metric_label_size: 11
+    number_size: 24
+    number_top: 18
+    spark: [78, 26]
+    intent_y: 312
+    emotion_y: 418
+    choice_size: 18
+    choice_heading_size: 11
+    bar_size: 10
+    bar_height: 6
+    bar_label_em: 5
+    bar_value_em: 3
+    bar_inner_gap: 8
+    arc_y: 450
+    arc_height: 14
+    legend_y: 476
+    legend_size: 10
+    legend_gap: 6
+    legend_square: 8
+    label_slots: [[40, 196], [968, 92]]
+    label_width: 260
+    label_size: 22
+    badge_size: 12
+    status: [32, 548, 900, 28]
+    status_size: 12
+    status_padding: [10, 3]
+    footer: [32, 700, 1216, 20]
+    footer_size: 11
+    footer_padding: [8, 1]
