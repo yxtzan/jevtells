@@ -66,6 +66,7 @@ def _arguments() -> argparse.Namespace:
     run_parser.add_argument("--layout", choices=("h", "v", "both"), default="both")
     run_parser.add_argument("--title")
     run_parser.add_argument("--debug-layout", action="store_true", help="draw per-shot target bounds, forbidden zones and label positions")
+    run_parser.add_argument("--reframe", choices=("auto","off"), default="auto", help="portrait full-height 4:3 crop (default: auto)")
     return parser.parse_args()
 
 
@@ -286,7 +287,7 @@ def main() -> None:
         source_size = (int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)), int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
         capture.release()
         stage_start = time.perf_counter()
-        render.run(clip, output, windows, points, config=config, speaker=arguments.speaker, lang=arguments.lang, title=getattr(arguments, "title", None), layout=getattr(arguments, "layout", "both"), blur=blur_rectangles, subtitles=getattr(arguments, "subtitles", "on") == "on", source_size=source_size, force=force_stage("render"), debug_layout=getattr(arguments, "debug_layout", False))
+        render.run(clip, output, windows, points, config=config, speaker=arguments.speaker, lang=arguments.lang, title=getattr(arguments, "title", None), layout=getattr(arguments, "layout", "both"), blur=blur_rectangles, subtitles=getattr(arguments, "subtitles", "on") == "on", source_size=source_size, force=force_stage("render"), debug_layout=getattr(arguments, "debug_layout", False), reframe=getattr(arguments,"reframe","auto"))
         stage_times["render"] = time.perf_counter() - stage_start
 
     if arguments.from_stage == "render":

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import copy
 import fnmatch
 import json
 import re
 import subprocess
 import time
 from pathlib import Path
+from dataclasses import replace
 from typing import Any, Mapping, Sequence
 
 import cv2
@@ -24,6 +26,7 @@ from .labels import schedule
 from .panels import Panels, opacity
 from .text import Fonts, draw_fitted
 from .placement import card_side, leader, select_positions
+from .reframe import crop_at, detect_subtitles, plan_crops
 
 
 def blur_frame(frame: Image.Image, rectangles: Sequence[Sequence[float]], original: tuple[int, int], radius: float) -> Image.Image:
@@ -41,17 +44,19 @@ def blur_frame(frame: Image.Image, rectangles: Sequence[Sequence[float]], origin
 
 
 class Composer:
-    def __init__(self, settings: Mapping[str, Any], layout: Layout, windows: Sequence[Mapping[str, Any]], points: Mapping[str, Any], actions: Sequence[Mapping[str, Any]], judgments: Mapping[str, Any], narration: Mapping[str, Any], transcript: Mapping[str, Any], *, title: str, sources: str, lang: str, blur: Sequence[Sequence[float]], subtitles: bool, config: Mapping[str, Any], shots: Sequence[Mapping[str, Any]] = ()) -> None:
+    def __init__(self, settings: Mapping[str, Any], layout: Layout, windows: Sequence[Mapping[str, Any]], points: Mapping[str, Any], actions: Sequence[Mapping[str, Any]], judgments: Mapping[str, Any], narration: Mapping[str, Any], transcript: Mapping[str, Any], *, title: str, sources: str, lang: str, blur: Sequence[Sequence[float]], subtitles: bool, config: Mapping[str, Any], shots: Sequence[Mapping[str, Any]] = (), reframe_plan: Mapping[str, Any] | None = None) -> None:
         self.settings, self.layout, self.windows, self.points = settings, layout, windows, points
         self.events, self.judgments, self.transcript = actions, judgments, transcript
         self.blur, self.subtitles = blur, subtitles
         self.shots = shots
+        self.reframe_plan = reframe_plan or {}
         self.audit: dict[str, Any] = {}
         self.tr = load_translations(lang)
         self.fonts = Fonts(settings, layout.scale)
         self.panels = Panels(settings, layout, self.fonts, self.tr, windows, judgments, narration, title, sources)
         self.c, self.p = settings["colors"], settings[layout.kind]
-        self.label_cache: dict[tuple[str, str], Image.Image] = {}
+        self.label_cache: dict[tuple[str, str, float], Image.Image] = {}
+        self.label_limits: dict[str, float] = {}
         self.subtitle_cache: dict[str, Image.Image] = {}
         self.visibility = float(config.get("detection", {}).get("pose_visibility_threshold", 0.5))
         smoothing = config.get("smoothing", {})
@@ -77,11 +82,32 @@ class Composer:
                 self.card_sides[int(shot["index"])] = card_side(shot.get("target_box"),layout.source[0],self.p["card"][2]*layout.source[0]/layout.video[2],self.layout.px(settings.get("layout",{}).get("safe_margin",24))/layout.scale*layout.source[0]/layout.video[2])
         self.placements: dict[int, dict[str, Any]] = {}
         for shot in self.shots:
+            if self.reframe_plan.get("enabled"):
+                self.layout=replace(self.layout,crop=crop_at(self.reframe_plan,float(shot["t0"])))
             self.placements[int(shot["index"])] = self.place(shot)
+        self.layout=layout
 
     def place(self, shot: Mapping[str, Any]) -> dict[str, Any]:
         start = round(float(shot["t0"])*float(self.points.get("fps",30)))
         end = round(float(shot["t1"])*float(self.points.get("fps",30)))
+        if shot.get("target_box") and not shot.get("far"):
+            x0,y0,x1,y1=shot["target_box"]
+            box=self.layout.source_rect((x0,y0,x1-x0,y1-y0))
+            vx,vy,vw,vh=self.layout.video
+            margin=self.layout.px(self.settings["layout"]["safe_margin"]+self.settings["layout"]["stack_gap"])
+            available=sorted({min(self.p["label_width"],space/self.layout.scale) for space in (box[0]-self.layout.px(vx)-margin,self.layout.px(vx+vw)-box[2]-margin) if space>0})
+            for event in self.events:
+                mid=(float(event["t0"])+float(event["t1"]))/2
+                if not float(shot["t0"])<=mid<float(shot["t1"]) or event.get("far"):
+                    continue
+                for width in available:
+                    self.label_limits[str(event["id"])]=width
+                    try:
+                        self.label_sprite(event,"left")
+                        self.label_sprite(event,"right")
+                        break
+                    except ValueError:
+                        self.label_limits.pop(str(event["id"]),None)
         sizes, anchors = {}, {}
         for slot in ("left", "right"):
             sprites = [self.label_sprite(event,slot) for event in self.events if not event.get("far") and event.get("type") in self.settings["label_types"] and float(event["t0"]) < float(shot["t1"]) and float(event["t1"]) >= float(shot["t0"]) and (event.get("limb") == "both_hands" or (slot=="left") == (event.get("limb") in {"right_hand","head","body"}))]
@@ -112,7 +138,8 @@ class Composer:
         return before+(current-before)*amount
 
     def label_sprite(self, event: Mapping[str, Any], slot: str) -> Image.Image:
-        cache_key = (str(event["id"]), slot)
+        available=self.label_limits.get(str(event["id"]),self.p["label_width"])
+        cache_key = (str(event["id"]), slot, available)
         if cache_key in self.label_cache:
             return self.label_cache[cache_key]
         label = self.settings["label"]
@@ -123,7 +150,7 @@ class Composer:
         if limb == "both_hands" and action.startswith(prefix):
             action = action[len(prefix):].strip()
         text = (prefix + " · " if prefix else "") + action
-        fit = self.fonts.fit(text, "sans_black", self.p["label_size"], self.p["label_width"] - 2 * label["padding"][0], 1)
+        fit = self.fonts.fit(text, "sans_black", self.p["label_size"], available - 2 * label["padding"][0], 1)
         px, py = (self.layout.px(v) for v in label["padding"])
         width = round(fit.font.getlength(text)) + 2 * px
         height = round(fit.size * g["line_height"]) + 2 * py
@@ -133,7 +160,7 @@ class Composer:
         probability = judgment.get("actions", {}).get(str(event["id"]))
         details.append(self.tr["ui"]["expressive"].format(value=f"{probability:.2f}" if isinstance(probability, (int, float)) else self.tr["ui"]["missing"]))
         badge_text = " · ".join(details)
-        badge_fit = self.fonts.fit(badge_text, "sans", self.p["badge_size"], self.p["label_width"] - 2 * label["badge_padding"][0] - label["badge_indent"], 1)
+        badge_fit = self.fonts.fit(badge_text, "sans", self.p["badge_size"], available - 2 * label["badge_padding"][0] - label["badge_indent"], 1)
         bx, by = (self.layout.px(v) for v in label["badge_padding"])
         badge_width = round(badge_fit.font.getlength(badge_text)) + 2 * bx
         badge_height = round(badge_fit.size * g["line_height"]) + 2 * by
@@ -161,6 +188,14 @@ class Composer:
                 continue
             if current_shot and self.layout.kind == "h" and abs(self.card_x(seconds)-self.card_x(float(current_shot["t1"])-1e-9)) > 1e-6:
                 continue
+            if current_shot and self.layout.kind=="h" and int(current_shot["index"])>1:
+                i=int(current_shot["index"])
+                if self.card_sides[i] != self.card_sides[i-1]:
+                    entered=progress(seconds-float(current_shot["t0"])-self.settings["animation"]["card_seconds"],self.settings["animation"]["label_in_seconds"])
+                    alpha*=entered
+                    zoom=min(zoom,self.settings["animation"]["label_start_scale"]+(1-self.settings["animation"]["label_start_scale"])*entered)
+                    if alpha<=0:
+                        continue
             xy = self.anchors["head" if event.get("limb") in {"head", "body"} else slot][point_index]
             if not np.isfinite(xy).all():
                 continue
@@ -279,8 +314,14 @@ class Composer:
         image.alpha_composite(layer, (self.layout.px(vx + vw / 2) - layer.width // 2, self.layout.px(vy + vh - cfg["bottom"]) - layer.height))
 
     def frame(self, source: Image.Image, seconds: float, point_index: int) -> Image.Image:
+        if self.reframe_plan.get("enabled"):
+            self.layout=replace(self.layout,crop=crop_at(self.reframe_plan,seconds))
         self.audit = {"seconds": seconds, "output": list(self.layout.output), "labels": [], "forbidden": self.forbidden(seconds)}
         source = blur_frame(source, self.blur, self.layout.source, self.settings["blur_radius"])
+        if self.layout.crop:
+            cx,cy,cw,ch=self.layout.crop
+            sx,sy=source.width/self.layout.source[0],source.height/self.layout.source[1]
+            source=source.crop((round(cx*sx),round(cy*sy),round((cx+cw)*sx),round((cy+ch)*sy)))
         x, y, width, height = self.layout.video
         image = Image.new("RGBA", self.layout.output, self.c["ink"])
         image.paste(source.resize((self.layout.px(width), self.layout.px(height)), Image.Resampling.BICUBIC), self.layout.point(x, y))
@@ -351,7 +392,7 @@ def _signature(out: Path, values: Mapping[str, Any]) -> str:
     return digest.hexdigest()
 
 
-def run(clip: Path, out: Path, windows: Sequence[Mapping[str, Any]], points: Mapping[str, Any], *, config: Mapping[str, Any], speaker: str, lang: str = "zh", title: str | None = None, layout: str = "both", blur: Sequence[Sequence[float]] = (), subtitles: bool = True, source_size: tuple[int, int] | None = None, force: bool = False, debug_layout: bool = False) -> dict[str, Any]:
+def run(clip: Path, out: Path, windows: Sequence[Mapping[str, Any]], points: Mapping[str, Any], *, config: Mapping[str, Any], speaker: str, lang: str = "zh", title: str | None = None, layout: str = "both", blur: Sequence[Sequence[float]] = (), subtitles: bool = True, source_size: tuple[int, int] | None = None, force: bool = False, debug_layout: bool = False, reframe: str = "auto") -> dict[str, Any]:
     settings = config["render"]
     executable = _ffmpeg()
     available = subprocess.run([executable, "-hide_banner", "-encoders"], capture_output=True, text=True, check=True).stdout
@@ -369,7 +410,7 @@ def run(clip: Path, out: Path, windows: Sequence[Mapping[str, Any]], points: Map
     previous_meta = read("render_meta.json", {})
     results: dict[str, Any] = dict(previous_meta)
     for kind in (("h", "v") if layout == "both" else (layout,)):
-        signature = _signature(out, {"render": settings, "kind": kind, "title": title, "lang": lang, "blur": blur, "subtitles": subtitles, "source_size": source_size})
+        signature = _signature(out, {"render": settings, "kind": kind, "title": title, "lang": lang, "blur": blur, "subtitles": subtitles, "source_size": source_size,"reframe":reframe})
         destination = out / f"output_{kind}.mp4"
         if destination.exists() and not force and not debug_layout and previous_meta.get(kind, {}).get("signature") == signature:
             results[kind] = {**previous_meta[kind], "cached": True}
@@ -386,8 +427,18 @@ def run(clip: Path, out: Path, windows: Sequence[Mapping[str, Any]], points: Map
             frame_size = (int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)), int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
             fps = float(settings["fps"])
             total = round(total_input / input_fps * fps)
-            geometry = Layout.create(kind, settings, source_size or frame_size)
-            painter = Composer(settings, geometry, windows, points, events, judgments, narration, transcript, title=title, sources=_sources(out, settings, config, lang), lang=lang, blur=blur, subtitles=subtitles, config=config, shots=read("shots.json", []))
+            effective=copy.deepcopy(settings)
+            shot_list=read("shots.json", [])
+            plan={}
+            if kind=="v" and reframe=="auto" and frame_size[0]/frame_size[1]>4/3:
+                subtitle_result=detect_subtitles(clip,settings["reframe"]) if not subtitles else {"bounds":None}
+                (out / "burned_subtitles.json").write_text(json.dumps(subtitle_result,indent=2))
+                plan=plan_crops(*(source_size or frame_size),shot_list,points,subtitle_result["bounds"],settings["reframe"])
+                effective["v"].update(effective["v_reframe"])
+                effective["components"].update(effective["reframe_components"])
+            (out / f"reframe_{kind}.json").write_text(json.dumps(plan,indent=2))
+            geometry = Layout.create(kind, effective, source_size or frame_size,crop_at(plan,0))
+            painter = Composer(effective, geometry, windows, points, events, judgments, narration, transcript, title=title, sources=_sources(out, settings, config, lang), lang=lang, blur=blur, subtitles=subtitles, config=config, shots=shot_list,reframe_plan=plan)
             (out / f"layout_{kind}.json").write_text(json.dumps(list(painter.placements.values()), ensure_ascii=False, indent=2))
             if debug_layout:
                 painter.debug_layout(clip, out)

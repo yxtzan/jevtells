@@ -79,7 +79,6 @@ def select_positions(video: Sequence[float], target: Sequence[float] | None, for
     if best:
         result.update({"positions": {"left": best[1]["position"], "right": best[2]["position"]}, "fallback": False, "reason": None})
     else:
-        # If only one slot has a legal location, preserve it and mark only
-        # the unplaceable slot as fallback instead of discarding both.
-        result.update({"positions": {slot: values[0]["position"] if values else list(fallback[slot]) for slot,values in choices.items()}, "fallback": True, "reason": "no noncrossing legal pair", "fallback_slots": [slot for slot,values in choices.items() if not values] or ["left","right"]})
+        # SPEC explicitly keeps the legacy positions when no legal pair exists.
+        result.update({"positions": {slot: list(fallback[slot]) for slot in choices}, "fallback": True, "reason": "no noncrossing legal pair", "fallback_slots": ["left","right"]})
     return result

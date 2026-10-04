@@ -127,6 +127,60 @@ stop_on_api_error: true
 
 # Dimensions are CSS/design pixels. Layout.scale multiplies every dimension.
 render:
+  reframe:
+    max_offset: 0.08
+    subtitle_strip: 0.20
+    sample_seconds: 1
+    min_glyphs: 6
+    text_value: 140
+    text_saturation: 85
+    background_value: 90
+    background_ratio: 0.45
+    edge_low: 80
+    edge_high: 180
+    pan_exit_ratio: 0.10
+    pan_wait_seconds: 1
+    pan_seconds: 0.60
+    visibility: 0.50
+  reframe_components:
+    line_height: 1.30
+    quote_gap: 10
+    quote_tag_size: 14
+    bar_gap: 1
+    bar_height: 8
+  v_reframe:
+    video: [0, 150, 1080, 810]
+    title: [48, 34, 984, 66]
+    title_size: 44
+    title_padding: [14, 3]
+    brand_gap: 10
+    brand_size: 18
+    status: [48, 106, 984, 28]
+    status_size: 15
+    commentary: [48, 972, 984, 84]
+    commentary_size: 32
+    commentary_gap: 14
+    index_size: 16
+    index_top: 7
+    quote_y: 1066
+    quote_size: 18
+    metrics_y: 1102
+    metric_label_size: 15
+    number_size: 46
+    number_top: 8
+    spark: [300, 34]
+    lower_y: 1235
+    choice_size: 30
+    choice_heading_size: 15
+    choice_top: 2
+    choice_bottom: 0
+    arc_top: 8
+    arc_height: 18
+    legend_size: 12
+    label_slots: [[24, 250], [800, 250]]
+    footer: [48, 1408, 984, 32]
+    footer_size: 13
+    footer_top: 8
   layout:
     card_left_x: 32
     safe_margin: 24
