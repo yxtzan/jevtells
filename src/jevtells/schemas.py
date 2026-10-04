@@ -16,6 +16,7 @@ class Window(BaseModel):
     prev_subtitle: str = ""
     shot: str = "target"
     kind: str = "speech"
+    speaker_other: bool = False
 
 
 class State(BaseModel):

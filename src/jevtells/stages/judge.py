@@ -11,6 +11,7 @@ import yaml
 from ..clients.openrouter import OpenRouterClient
 from ..schemas import Judgment
 from .state import action_text
+from .speakers import other_ids
 
 
 _SCORE_IDS = ("confidence", "focus", "tension")
@@ -177,6 +178,8 @@ def run(states: Mapping[str, Any] | None, out: Path, force: bool = False, config
         return json.loads(destination.read_text(encoding="utf-8"))
     if states is None:
         states = json.loads((out / "states.json").read_text(encoding="utf-8"))
+    windows_path = out / "windows.json"
+    skipped = other_ids(json.loads(windows_path.read_text(encoding="utf-8"))) if windows_path.exists() else set()
     base = load_questions()
     model = str((config or {}).get("jev", {}).get("model", "typesafe/jev-1.13"))
     active_client = client or OpenRouterClient()
@@ -185,6 +188,10 @@ def run(states: Mapping[str, Any] | None, out: Path, force: bool = False, config
     judgments: dict[str, Any] = {}
     aggregate = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "cost": 0.0, "failed": 0}
     for window_id, state in states.items():
+        if window_id in skipped:
+            judgments[window_id] = None
+            (raw_dir / f"jev_{window_id}.json").unlink(missing_ok=True)
+            continue
         questions = _actions_questions(state, base)
         aggregate["calls"] += 1
         try:
@@ -204,11 +211,17 @@ def run(states: Mapping[str, Any] | None, out: Path, force: bool = False, config
             # Do not serialize exception text: transport errors can contain provider data.
             aggregate["failed"] += 1
             judgments[window_id] = {"scores": {key: None for key in _SCORE_IDS}, "intent": None, "emotion": None, "actions": {}, "error": type(error).__name__}
+            if (config or {}).get("stop_on_api_error", False):
+                destination.write_text(json.dumps(judgments, ensure_ascii=False, indent=2), encoding="utf-8")
+                (out / "judge_meta.json").write_text(json.dumps({**aggregate, "model": model, "error_window": window_id}, ensure_ascii=False, indent=2), encoding="utf-8")
+                raise
     if aggregate["cost"] == 0.0:
         aggregate["cost"] = None
     for value in judgments.values():
-        Judgment.model_validate(value)
+        if value is not None:
+            Judgment.model_validate(value)
     destination.write_text(json.dumps(judgments, ensure_ascii=False, indent=2), encoding="utf-8")
+    aggregate.update({"model": model, "skipped": {identifier: "speaker_other: window overlaps other speech >= configured threshold" for identifier in sorted(skipped)}})
     (out / "judge_meta.json").write_text(json.dumps(aggregate, ensure_ascii=False, indent=2), encoding="utf-8")
     judgments["_meta"] = aggregate
     return judgments

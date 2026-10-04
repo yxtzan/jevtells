@@ -39,3 +39,38 @@ ui:
   source: 来源：JevTells + OpenRouter
   unknown: 未知
   missing: —
+  brand: JevTells · 肢体潜台词
+  title: AI 读{speaker}
+  waiting: 等待第一句…
+  other_speaker: （他人发言，本句不做判定）
+  other_legend: 他人发言
+  locked: 目标已锁定
+  lost: 目标丢失
+  status: '{time:.1f}s · 窗口 {index}/{total} · {target}'
+  quote: 引语
+  intent: 意图
+  emotion: 情绪
+  certainty: 置信 {value}
+  card_title: JEV 综合判定
+  card_source: 字幕+声音+动作
+  magnitude: 幅度{value}
+  expressive: 表达欲 {value}
+  action_source: 动作 MediaPipe 逐帧检测
+  judge_source: 判定 {model}
+  narrate_source: 解说 {model}
+facts:
+  scores:
+    confidence: 自信度
+    focus: 专注度
+    tension: 紧张度
+  limbs:
+    left_hand: 左手
+    right_hand: 右手
+    both_hands: 双手
+    head: ''
+    body: 身体
+  simultaneous: 同时
+  magnitudes:
+    small: 小
+    medium: 中
+    large: 大
