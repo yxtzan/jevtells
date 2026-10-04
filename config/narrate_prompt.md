@@ -8,10 +8,14 @@ Lines already shown earlier in this video (do not reuse their wording or opening
 {previous_lines}
 
 Write "line" in {language_name}.
+Suggested opening for this window: {opening_style}.
+Vary among movement, quotation, measured change, and voice openings. Adjacent windows
+receive different suggestions. Use an available fact if the suggested kind is absent.
+Examples of structure only: 双手下压… / 「关键短语」伴随… / 专注度回落… / 语速加快…
 
 Rules for "line":
 1. Chinese: at most 32 characters. English: at most 16 words. One sentence, no final period.
-2. When possible combine, in this order: (a) a concrete movement taken from facts.gestures,
+2. When possible combine, in varied order: (a) a concrete movement taken from facts.gestures,
    (b) ONE short key phrase from facts.subtitle, faithfully translated, wrapped in 「」,
    (c) ONE item from facts.highlights.
 3. If facts.gestures is empty, use the voice or a highlight instead. Never invent a movement.
@@ -22,6 +26,8 @@ Rules for "line":
 6. Neutral and descriptive. Never mock. Never claim lying, guilt, hidden motives, or mental states
    beyond the given intent/emotion labels. Never guess identity or private information.
 7. Do not begin with the same 4 characters as any previous line.
+8. In Chinese, the same first 2 characters may occur at most twice in the video.
+   The same 2 characters immediately before 「 may occur at most twice, never in adjacent lines.
 
 Rules for "quote": an exact substring of facts.subtitle, 2–8 words, the most meaningful phrase.
 

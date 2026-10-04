@@ -35,9 +35,10 @@ def test_highlights_extrema_delta_continuous_and_label_transition():
     windows = [{"id": f"W{i}"} for i in range(4)]
     scores = {"W0": judgment(.2), "W1": judgment(.28), "W2": judgment(.5, "emphasize", "firm"), "W3": judgment(.3)}
     facts = compute_highlights(scores, windows)
-    assert "自信度 0.20，全场最低" in facts["W0"]
+    assert not any("全场最低" in item for item in facts["W0"])
     assert "自信度比上一句 +0.08" in facts["W1"]
     assert "自信度 0.50，全场最高" in facts["W2"]
+    assert sum("全场" in item for items in facts.values() for item in items) == 2
     assert "紧张度持续走高" in facts["W2"]
     assert "意图由「解释说明」转为「强调重点」" in facts["W2"]
     assert "情绪由「平静」转为「坚定」" in facts["W2"]

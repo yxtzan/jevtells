@@ -85,6 +85,17 @@ def validation_errors(parsed: Mapping[str, Any], facts: Mapping[str, Any], previ
                 errors.append("English trend/extreme absent from facts.highlights")
     if any(line[:4] == old[:4] for old in previous):
         errors.append(f"first four characters repeat an earlier line: {line[:4]!r}. Change the opening, still using only the given facts")
+    if lang == "zh":
+        if sum(old[:2] == line[:2] for old in previous) >= 2:
+            errors.append("first two characters may appear at most twice across the video")
+        before_quote = re.search(r"(.{2})「", line)
+        if before_quote:
+            opening = before_quote[1]
+            earlier = [re.search(r"(.{2})「", old) for old in previous]
+            if sum(match is not None and match[1] == opening for match in earlier) >= 2:
+                errors.append("two characters before 「 may appear at most twice across the video")
+            if earlier and earlier[-1] and earlier[-1][1] == opening:
+                errors.append("two characters before 「 must differ in adjacent lines")
     subtitle = str(facts.get("subtitle", ""))
     if not quote or quote not in subtitle or not 2 <= len(quote_tokens(quote)) <= 8:
         errors.append("quote must be an exact subtitle substring with 2–8 tokens")

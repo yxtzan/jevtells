@@ -73,7 +73,7 @@ def run(states: Mapping[str, Any] | None, judgments: Mapping[str, Any] | None, o
     if destination.exists() and not force:
         meta_path = out / "narrate_meta.json"
         meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
-        if meta.get("lang") == lang and meta.get("facts_version") == 1:
+        if meta.get("lang") == lang and meta.get("facts_version") == 2:
             return json.loads(destination.read_text(encoding="utf-8"))
     if states is None:
         states = json.loads((out / "states.json").read_text(encoding="utf-8"))
@@ -99,7 +99,7 @@ def run(states: Mapping[str, Any] | None, judgments: Mapping[str, Any] | None, o
             continue
         for path in raw_dir.glob(f"narrate_{identifier}*.json"):
             path.unlink()
-        prompt = template.format(facts_json=json.dumps(facts, ensure_ascii=False), previous_lines=json.dumps(previous, ensure_ascii=False), language_name="English" if lang == "en" else "Chinese")
+        prompt = template.format(facts_json=json.dumps(facts, ensure_ascii=False), previous_lines=json.dumps(previous, ensure_ascii=False), language_name="English" if lang == "en" else "Chinese", opening_style=facts["opening_style"])
         if lang == "zh":
             prompt += "\nChinese length counts ALL characters, including spaces, Latin letters and brackets. Aim for 20–28 characters. Translate the phrase in line into concise Chinese; quote remains original."
         failures: list[list[str]] = []
@@ -149,7 +149,7 @@ def run(states: Mapping[str, Any] | None, judgments: Mapping[str, Any] | None, o
     if stats["cost"] == 0.0:
         stats["cost"] = None
     destination.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
-    (out / "narrate_meta.json").write_text(json.dumps({**stats, "model": model, "lang": lang, "facts_version": 1}, ensure_ascii=False, indent=2), encoding="utf-8")
+    (out / "narrate_meta.json").write_text(json.dumps({**stats, "model": model, "lang": lang, "facts_version": 2}, ensure_ascii=False, indent=2), encoding="utf-8")
     return results
 
 
