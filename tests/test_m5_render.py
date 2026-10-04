@@ -10,6 +10,20 @@ from jevtells.render.geometry import Layout
 from jevtells.render.renderer import Composer
 
 
+def test_run_defaults_to_render_and_state_remains_available(monkeypatch, capsys):
+    import sys
+    from jevtells.cli import _arguments
+    base = ["jevtells", "run", "sample.mp4", "--speaker", "Demo"]
+    monkeypatch.setattr(sys, "argv", base)
+    assert _arguments().until == "render"
+    monkeypatch.setattr(sys, "argv", base + ["--until", "state"])
+    assert _arguments().until == "state"
+    monkeypatch.setattr(sys, "argv", ["jevtells", "run", "--help"])
+    with pytest.raises(SystemExit):
+        _arguments()
+    assert "default: render" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize("kind", ["h", "v"])
 def test_commentary_and_quote_switch_together_without_overlap(kind, monkeypatch):
     config = load_config()

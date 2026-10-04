@@ -56,7 +56,7 @@ def _arguments() -> argparse.Namespace:
     run_parser.add_argument("--start", type=float, default=0.0)
     run_parser.add_argument("--duration", type=float)
     run_parser.add_argument("--force", action="store_true")
-    run_parser.add_argument("--until", default="state", choices=_STAGE_ORDER)
+    run_parser.add_argument("--until", default="render", choices=_STAGE_ORDER, help="last stage to run (default: render); state also writes debug.mp4")
     run_parser.add_argument("--from", dest="from_stage", choices=_STAGE_ORDER)
     run_parser.add_argument("--target", action="append", default=[], metavar="N@SECONDS", help="target person number at a time anchor; repeat for cuts")
     run_parser.add_argument("--config")
