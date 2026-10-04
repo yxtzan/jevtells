@@ -4,7 +4,7 @@
 >
 > 上传一段说话人视频，得到一段标注了手势、意图和 Jev 判定的视频。
 
-**Status: v0.3.0 — analysis complete, rendering in progress.** The tool extracts subtitles, keypoints and voice features, locks onto the person you choose, detects gestures, asks Jev for per-window judgments (confidence, focus, tension, intent, emotion) and writes a one-line narration. The final annotated video arrives in v0.4.
+**Status: v0.4.0 — first complete version.** Feed in a video, pick the person to analyse, and get back two annotated videos: landscape 16:9 and portrait 3:4. They show gesture labels that follow the hands, Jev's scores and trends, intent and emotion, and a one-line narration grounded in the measured data.
 
 ## How it works
 
@@ -45,7 +45,7 @@ cp .env.example .env    # then open .env and paste your OpenRouter key after OPE
 
 The speech-to-text model downloads automatically on the first run. Get an OpenRouter key at [openrouter.ai](https://openrouter.ai); it is only read from `.env`, which is never committed.
 
-## Usage (v0.3.0)
+## Usage (v0.4.0)
 
 **1. See who is in the frame.** Every detected person gets a number, left to right:
 
@@ -54,16 +54,19 @@ jevtells people path/to/video.mp4            # writes work/<clip_id>/people_00.0
 jevtells people path/to/video.mp4 --at 12    # numbering at another moment
 ```
 
-**2. Run with the person you want to analyse:**
+**2. Run with the person you want to analyse.** `--until render` produces the finished videos:
 
 ```bash
-jevtells run path/to/video.mp4 --target 2 --speaker "Speaker name" --until narrate
+jevtells run path/to/video.mp4 --target 2 --speaker "Speaker name" \
+  --title "AI 读 Speaker" --until render
 ```
+
+This writes `output_h.mp4` (1920×1080) and `output_v.mp4` (1080×1440) to `work/<clip_id>/`.
 
 If the video cuts or zooms and the numbering changes, add more anchors in the form `NUMBER@SECONDS`. For example, follow person 2 from the start and person 1 from 12 s on:
 
 ```bash
-jevtells run path/to/video.mp4 --target 2@0 --target 1@12 --speaker "Speaker name" --until narrate
+jevtells run path/to/video.mp4 --target 2@0 --target 1@12 --speaker "Speaker name" --until render
 ```
 
 When the main person can't be found, the tool leaves the frame unlabelled (`target=lost`) instead of jumping to someone else.
@@ -72,6 +75,7 @@ Results go to `work/<clip_id>/`:
 
 | File | Content |
 |---|---|
+| `output_h.mp4`, `output_v.mp4` | The annotated videos |
 | `debug.mp4` | Skeleton, hands, target box and current gesture drawn on the video |
 | `actions.json` | Detected gestures with time, hand and magnitude |
 | `actions_review/` | One start / middle / end strip per gesture, for checking by eye |
@@ -87,17 +91,22 @@ Results go to `work/<clip_id>/`:
 | `--target N` or `N@SECONDS` | Who to analyse; repeat for cuts |
 | `--lang zh` / `--lang en` | Narration language (default `zh`); switching only re-runs the narration |
 | `--scene TEXT` | Describe the scene yourself instead of the automatic description |
+| `--layout h` / `v` / `both` | Which video to render (default `both`) |
+| `--title TEXT` | Headline of the portrait video (default `AI 读<speaker>`) |
+| `--others-speaking START-END` | Seconds when someone else is talking; repeatable. Those sentences get no scores or narration |
+| `--blur X,Y,W,H` | Blur a rectangle (source pixels) in the finished video, e.g. a watermark; repeatable |
+| `--subtitles on` / `off` | Draw subtitles (default `on`); use `off` if the video already has burned-in subtitles |
 | `--start`, `--duration` | Analyse only part of the video (seconds) |
 | `--srt FILE` | Use your own subtitles instead of automatic transcription |
 | `--force` | Recompute every stage (otherwise cached results are reused) |
 | `--from STAGE`, `--until STAGE` | Run only part of the pipeline |
 | `--config FILE` | Use your own thresholds instead of `config/default.yaml` |
 
-Changing `--target` only re-runs tracking and the stages after it; body detection is cached. A 30-second clip takes about one minute on an Apple M4 MacBook Air.
+Changing `--target` only re-runs tracking and the stages after it; body detection is cached. To change only the look (title, blur, layout, subtitles), use `--from render --until render`: no API calls are made. Visual settings (colours, sizes, timings, which gesture types are shown) live in the `render` section of `config/default.yaml`. A 30-second clip takes about one minute on an Apple M4 MacBook Air.
 
 **Cost.** Jev, the narration model and the scene model all run through OpenRouter. A 30-second clip cost about **$0.002** in October 2026. Cached stages are free; re-running `judge`, `narrate` or `scene` calls the API again. `run_meta.json` lists the calls and cost per stage. Question wording and the narration prompt are editable in `config/jev_questions.yaml` and `config/narrate_prompt.md`.
 
-**Limitation.** The tool assumes the person you chose is the one speaking. If someone else talks, their words are still attributed to your target.
+**Limitations.** The tool assumes the person you chose is the one speaking; mark other speakers with `--others-speaking`. Scores come from a general-purpose model and are uncalibrated. Gesture rules were tuned on a small set of clips, so expect some wrong labels on very different footage.
 
 ## Troubleshooting
 

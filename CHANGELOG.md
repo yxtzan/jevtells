@@ -5,6 +5,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-05
+
+### Added
+
+- `render` stage: annotated landscape (1920×1080) and portrait (1080×1440) videos following `docs/design.md`. Gesture labels follow the hands; animated scores with whole-clip trend lines and change vs the previous sentence; top-3 intent probabilities; emotion timeline; narration headline with highlighted key phrase.
+- `--layout`, `--title`, `--others-speaking`, `--blur`, `--subtitles`.
+- Narration rebuilt on computed facts: code derives highlights (clip-wide highs and lows, changes, trends, intent and emotion shifts), the model may only use those, and every line is checked before it is accepted, with up to two retries and a template fallback.
+- `scripts/render_review.py` for frame grabs, side-by-side comparisons and per-second overviews.
+- Additional fonts (Noto Sans CJK SC, Noto Serif CJK SC, Noto Sans Mono) in the download script.
+
+### Known issues
+
+- Label positions are fixed per side, so they can land far from a speaker standing at the edge of the frame.
+- `run` still stops after `state` by default; add `--until render` for the videos.
+- Old and new narration lines overlap briefly when the sentence changes.
+
 ## [0.3.0] - 2026-10-04
 
 ### Added
@@ -71,7 +87,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - The voice description covers loudness only.
 - Gesture measurement is a placeholder (wrist travel); gesture labels arrive in 0.2.0.
 
-[Unreleased]: https://github.com/yxtzan/jevtells/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/yxtzan/jevtells/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/yxtzan/jevtells/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/yxtzan/jevtells/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/yxtzan/jevtells/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/yxtzan/jevtells/releases/tag/v0.1.0

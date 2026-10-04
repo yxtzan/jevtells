@@ -290,17 +290,15 @@ M2 验收后确定的规则（两段测试素材验证过）：
 - 语气要求：中性描述看得见、听得到的东西；不嘲讽，不下心理结论（如「他在撒谎」），不编造 state 和 judgments 里没有的信息。
 - 场景描述是独立的 `scene` 阶段：取片段中间一帧，调用一个视觉模型生成一句英文描述，缓存在 `scene.json`，在 `state` 之前运行。用户传了 `--scene` 就不调用。
 
-## 10. 渲染（M4，细节到时另定）
+## 10. 渲染
 
-- **信息结构**：顶部状态条（时间、窗口号、镜头）；左侧动作标签，并用连线指向对应的手部关键点；底部解说 + 引语 + 字幕；右侧综合判定面板（三条分数、意图、情绪弧）；底部来源与免责声明。
-- **视觉风格**：自己设计，不照搬参考视频的配色和版式。
-- **硬性要求**：
-  - 用 Pillow 绘制抗锯齿文字（Noto Sans SC，OFL 授权，由脚本下载）
-  - 所有尺寸按 1280×720 设计，再按输出分辨率缩放
-  - 连线锚点使用平滑后的关键点
-  - 数值切换时有缓动动画
-  - 免责声明始终可见
-  - `shot=other` 的镜头不显示动作标签
+完整规范见 `docs/design.md`（v0.4.0 已实现）。要点：
+
+- 两种画幅：横屏 1920×1080（按 1280×720 设计，×1.5），竖屏 1080×1440（视频在上，黑底的场外分析区在下）。
+- 视觉：画面内用 C 体育转播风（黑底荧光绿标签、粗引线），场外用 B 的排版 + A 的数据组件 + C 的配色。
+- Pillow 逐帧绘制，每个窗口的静态部分缓存，ffmpeg 编码。
+- 解说由代码先算出事实和亮点，模型只能用这些写，写完逐条校验（见 `stages/narrate_facts.py`、`stages/narrate_validation.py`）。
+- 他人发言的窗口不调用 API；水印模糊在叠加任何元素之前完成；原片已烧录字幕时关闭字幕层。
 
 ## 11. 命令行
 
@@ -310,6 +308,8 @@ jevtells people INPUT.mp4 [--at SECONDS] [--start 0] [--duration 30]
 jevtells run INPUT.mp4 [-o OUT.mp4] [--start 0] [--duration 30]
          [--target N | --target N@SECONDS ...]
          [--lang zh|en] [--speaker NAME] [--scene TEXT] [--srt FILE]
+         [--others-speaking START-END ...] [--blur X,Y,W,H ...]
+         [--subtitles on|off] [--layout h|v|both] [--title TEXT]
          [--until STAGE] [--from STAGE] [--force] [--config PATH]
 ```
 
