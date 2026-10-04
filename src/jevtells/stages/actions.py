@@ -33,6 +33,23 @@ _LIMB_NAMES = {
 }
 
 
+def mark_far(events: Sequence[Mapping[str, Any]], shots: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    result = []
+    for event in events:
+        value = dict(event)
+        mid = (float(value["t0"]) + float(value["t1"])) / 2
+        shot = next((shot for shot in shots if float(shot["t0"]) <= mid < float(shot["t1"])), None)
+        value["far"] = bool(shot and shot.get("far"))
+        value["shot_index"] = shot.get("index") if shot else None
+        result.append(value)
+    return result
+
+
+def _far_events(events: Sequence[Mapping[str, Any]], out: Path) -> list[dict[str, Any]]:
+    path = out / "shots.json"
+    return mark_far(events, json.loads(path.read_text())) if path.exists() else list(events)
+
+
 def _settings(config: Mapping[str, Any] | None) -> dict[str, Any]:
     """Flatten the config keys consumed by feature extraction and rules."""
 
@@ -255,7 +272,12 @@ def run(
     destination = out / "actions.json"
     if destination.exists() and not force:
         loaded = json.loads(destination.read_text(encoding="utf-8"))
-        return loaded if isinstance(loaded, dict) else {"events": loaded}
+        payload = loaded if isinstance(loaded, dict) else {"events": loaded}
+        updated = _far_events(payload["events"], out)
+        if updated != payload["events"]:
+            payload["events"] = updated
+            destination.write_text(json.dumps(updated, ensure_ascii=False, indent=2))
+        return payload
 
     settings = _settings(config)
     features = extract_features(points, settings)
@@ -264,6 +286,7 @@ def run(
     events.sort(key=lambda item: (float(item["t0"]), str(item["id"])))
     for index, event in enumerate(events, 1):
         event["id"] = f"A{index:03d}"
+    events = _far_events(events, out)
 
     out.mkdir(parents=True, exist_ok=True)
     # The persisted boundary file follows SPEC §6.6 (a list).  The return

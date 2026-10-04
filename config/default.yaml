@@ -100,6 +100,12 @@ lean_in:
   enabled: false
 
 shots:
+  histogram_threshold: 0.45
+  histogram_grid: 2
+  subtitle_exclusion_ratio: 0.20
+  min_seconds: 0.50
+  target_padding_shoulder: 0.15
+  far_shoulder_ratio: 0.15
   target_presence_ratio: 0.50
   min_target_height_ratio: 0.25
 

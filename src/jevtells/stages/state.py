@@ -59,6 +59,8 @@ def _actions(
             motion_types = {"raise", "press_down", "beat", "spread", "gather", "nod", "shake", "lean_in"}
             magnitude_rank = {"small": 0, "medium": 1, "large": 2}
             for event in events:
+                if event.get("far"):
+                    continue
                 try:
                     midpoint = float(event.get("mid", event.get("tmid", (float(event.get("t0", 0.0)) + float(event.get("t1", 0.0))) / 2)))
                     if float(window["t0"]) <= midpoint <= float(window["t1"]):
