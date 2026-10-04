@@ -9,6 +9,11 @@ def ease_out_cubic(value: float) -> float:
     return 1.0 - (1.0 - max(0.0, min(1.0, value))) ** 3
 
 
+def ease_in_out_cubic(value: float) -> float:
+    value = max(0.0, min(1.0, value))
+    return 4*value**3 if value < .5 else 1-(-2*value+2)**3/2
+
+
 def progress(elapsed: float, duration: float) -> float:
     return ease_out_cubic(elapsed / duration) if duration > 0 else 1.0
 

@@ -18,11 +18,12 @@ from PIL import Image, ImageDraw, ImageFilter
 from ..actions.features import smooth_zero_phase
 from ..i18n import load_translations
 from ..stages.prepare import _ffmpeg
-from .animation import commentary_at, window_at
+from .animation import commentary_at, ease_in_out_cubic, progress, window_at
 from .geometry import Layout
 from .labels import schedule
 from .panels import Panels, opacity
 from .text import Fonts, draw_fitted
+from .placement import card_side, leader, select_positions
 
 
 def blur_frame(frame: Image.Image, rectangles: Sequence[Sequence[float]], original: tuple[int, int], radius: float) -> Image.Image:
@@ -70,6 +71,45 @@ class Composer:
             self.anchors[slot] = smooth_zero_phase(xy, smooth_window, polynomial) if smoothing.get("enabled", True) else xy
         head = pose[:, int(settings["label"]["head_point"]), :2]
         self.anchors["head"] = smooth_zero_phase(head, smooth_window, polynomial)
+        self.card_sides = {}
+        for shot in self.shots:
+            if layout.kind == "h":
+                self.card_sides[int(shot["index"])] = card_side(shot.get("target_box"),layout.source[0],self.p["card"][2]*layout.source[0]/layout.video[2],self.layout.px(settings.get("layout",{}).get("safe_margin",24))/layout.scale*layout.source[0]/layout.video[2])
+        self.placements: dict[int, dict[str, Any]] = {}
+        for shot in self.shots:
+            self.placements[int(shot["index"])] = self.place(shot)
+
+    def place(self, shot: Mapping[str, Any]) -> dict[str, Any]:
+        start = round(float(shot["t0"])*float(self.points.get("fps",30)))
+        end = round(float(shot["t1"])*float(self.points.get("fps",30)))
+        sizes, anchors = {}, {}
+        for slot in ("left", "right"):
+            sprites = [self.label_sprite(event,slot) for event in self.events if not event.get("far") and event.get("type") in self.settings["label_types"] and float(event["t0"]) < float(shot["t1"]) and float(event["t1"]) >= float(shot["t0"]) and (event.get("limb") == "both_hands" or (slot=="left") == (event.get("limb") in {"right_hand","head","body"}))]
+            sizes[slot] = [max((sprite.width for sprite in sprites),default=self.layout.px(self.p["label_width"])),max((sprite.height for sprite in sprites),default=self.layout.px(80))]
+            xy = self.anchors[slot][start:end]
+            xy = xy[np.isfinite(xy).all(axis=1)]
+            median = np.median(xy,axis=0) if len(xy) else np.array([.5,.5])
+            anchors[slot] = self.layout.source_point(median[0]*self.layout.source[0],median[1]*self.layout.source[1])
+        zones = self.forbidden(float(shot["t1"])-1e-9)
+        target = next((zone["rect"] for zone in zones if zone["name"]=="target"),None)
+        vx,vy,vw,vh=self.layout.video
+        cfg=self.settings.get("layout",{})
+        result=select_positions(self.layout.rect((vx,vy,vw,vh)),target,[zone["rect"] for zone in zones],sizes,anchors,{slot:self.layout.point(*self.p["label_slots"][i]) for i,slot in enumerate(("left","right"))},margin=self.layout.px(cfg.get("safe_margin",24)),gap=self.layout.px(cfg.get("stack_gap",12)),step=self.layout.px(cfg.get("candidate_step",12)),line_ratio=cfg.get("max_leader_ratio",.45))
+        return {"shot_index":shot["index"],"t0":shot["t0"],"t1":shot["t1"],"sizes":sizes,"anchors":anchors,"forbidden":zones,"card_side":self.card_sides.get(int(shot["index"])),**result}
+
+    def card_x(self, seconds: float) -> float:
+        default=self.p.get("card",[0])[0]
+        if self.layout.kind != "h" or not self.shots:
+            return default
+        index=next((i for i,shot in enumerate(self.shots) if float(shot["t0"])<=seconds<float(shot["t1"])),len(self.shots)-1)
+        def position(i: int) -> float:
+            return default if self.card_sides[int(self.shots[i]["index"])]=="right" else self.settings["layout"]["card_left_x"]
+        current=position(index)
+        if not index:
+            return current
+        before=position(index-1)
+        amount=ease_in_out_cubic((seconds-float(self.shots[index]["t0"]))/self.settings["animation"]["card_seconds"])
+        return before+(current-before)*amount
 
     def label_sprite(self, event: Mapping[str, Any], slot: str) -> Image.Image:
         cache_key = (str(event["id"]), slot)
@@ -114,6 +154,13 @@ class Composer:
         draw = ImageDraw.Draw(image)
         label = self.settings["label"]
         for slot, (event, alpha, zoom) in selected.items():
+            current_shot = next((value for value in self.shots if float(value["t0"]) <= seconds < float(value["t1"])),None)
+            if current_shot and (current_shot.get("far") or current_shot["label"]=="other"):
+                continue
+            if current_shot and event.get("shot_index") and event["shot_index"] != current_shot["index"]:
+                continue
+            if current_shot and self.layout.kind == "h" and abs(self.card_x(seconds)-self.card_x(float(current_shot["t1"])-1e-9)) > 1e-6:
+                continue
             xy = self.anchors["head" if event.get("limb") in {"head", "body"} else slot][point_index]
             if not np.isfinite(xy).all():
                 continue
@@ -124,17 +171,20 @@ class Composer:
             if anchor[1] >= self.layout.px(vy + vh * (1 - self.settings["subtitle_exclusion_ratio"])):
                 continue
             if self.layout.kind == "h":
-                cx, cy, cw, ch = self.p["card"]
+                _cx, cy, cw, ch = self.p["card"]
+                cx=self.card_x(seconds)
                 if self.layout.px(cx) <= anchor[0] <= self.layout.px(cx + cw) and self.layout.px(cy) <= anchor[1] <= self.layout.px(cy + ch):
                     continue
             sprite = self.label_sprite(event, slot)
             if zoom < 1:
                 sprite = sprite.resize((round(sprite.width * zoom), round(sprite.height * zoom)), Image.Resampling.LANCZOS)
-            x, y = self.layout.point(*self.p["label_slots"][0 if slot == "left" else 1])
+            placement = self.placements.get(current_shot["index"]) if current_shot else None
+            x, y = placement["positions"][slot] if placement else self.layout.point(*self.p["label_slots"][0 if slot == "left" else 1])
+            x,y=round(x),round(y)
             # Keep the fixed slot but cap its right edge for long English text.
             x = min(x, image.width - sprite.width)
             body_height = self.layout.px(self.p["label_size"] * self.settings["components"]["line_height"] + 2 * label["padding"][1])
-            start = (x + sprite.width if slot == "left" else x, y + round(body_height * zoom / 2))
+            start = (x + sprite.width if anchor[0] >= x+sprite.width/2 else x, y + round(body_height * zoom / 2))
             elbow = (round(start[0] + (anchor[0] - start[0]) * label["leader_fraction"]), start[1])
             color = (*tuple(int(self.c["lime"][i:i+2], 16) for i in (1, 3, 5)), round(255 * alpha))
             leader = Image.new("RGBA", image.size)
@@ -144,7 +194,7 @@ class Composer:
             ld.ellipse((anchor[0] - radius, anchor[1] - radius, anchor[0] + radius, anchor[1] + radius), fill=color, outline=self.c["ink"], width=max(1, self.layout.px(label["point_outline"])))
             image.alpha_composite(leader)
             image.alpha_composite(opacity(sprite, alpha), (x, y))
-            self.audit["labels"].append({"slot": slot, "event": event["id"], "rect": [x, y, x + sprite.width, y + sprite.height], "fallback": True})
+            self.audit["labels"].append({"slot": slot, "event": event["id"], "rect": [x, y, x + sprite.width, y + sprite.height], "fallback": bool(not placement or slot in placement.get("fallback_slots",[]))})
 
     def forbidden(self, seconds: float) -> list[dict[str, Any]]:
         zones = []
@@ -163,8 +213,14 @@ class Composer:
         for rect in ((vx,vy,vw,margin),(vx,vy,margin,vh),(vx+vw-margin,vy,margin,vh),(vx,vy+vh-margin,vw,margin)):
             zone("edge", rect)
         if self.layout.kind == "h":
-            for name in ("card", "commentary", "status"):
-                zone(name, self.p[name])
+            cx,cy,cw,ch=self.p["card"]
+            zone("card",(self.card_x(seconds),cy,cw,ch))
+            zone("commentary",self.p["commentary"])
+            # Use the capsule's actual bounds rather than its maximum text slot.
+            wi,_gap=window_at(self.windows,seconds)
+            status,position=self.panels.status(wi,round(seconds*10),False)
+            shift=self.p["card"][0]-self.card_x(seconds)
+            zones.append({"name":"status","rect":[position[0]+self.layout.px(shift),position[1],position[0]+self.layout.px(shift)+status.width,position[1]+status.height]})
             zone("quote", (self.p["commentary"][0],self.p["quote_y"],self.p["commentary"][2],self.p["quote_size"]*self.settings["components"]["line_height"]+2*self.p["quote_padding"][1]))
         return zones
 
@@ -189,6 +245,13 @@ class Composer:
                 for position in self.p["label_slots"]:
                     x, y = self.layout.point(*position)
                     draw.rectangle((x,y,x+self.layout.px(self.p["label_width"]),y+self.layout.px(80)),outline="#4C82FF",width=2)
+                placement=self.placements[int(shot["index"])]
+                for values in placement["candidates"].values():
+                    for candidate in values[:24]:
+                        draw.rectangle(candidate["rect"],outline="#4C82FF",width=1)
+                for slot,position in placement["positions"].items():
+                    x,y=position;w,h=placement["sizes"][slot]
+                    draw.rectangle((x,y,x+w,y+h),outline="#C8FF2E",width=3)
                 for label in self.audit["labels"]:
                     draw.rectangle(label["rect"], outline="#C8FF2E", width=3)
                 image.save(directory / f"{self.layout.kind}_shot_{shot['index']:03d}.png")
@@ -226,7 +289,9 @@ class Composer:
         attenuation = self.settings["gap_opacity"] if gap else 1.0
         if index is not None:
             elapsed = seconds - float(self.windows[index]["t0"])
-            image.alpha_composite(opacity(self.panels.analysis(index, elapsed), attenuation))
+            analysis=opacity(self.panels.analysis(index, elapsed), attenuation)
+            offset=self.layout.px(self.card_x(seconds)-self.p["card"][0]) if self.layout.kind=="h" else 0
+            image.alpha_composite(analysis,(offset,0))
             animation = self.settings["animation"]
             sentence, amount, offset = commentary_at(index, elapsed, animation)
             image.alpha_composite(opacity(self.panels.quote(sentence), amount * attenuation))
@@ -245,6 +310,8 @@ class Composer:
         if self.subtitles:
             self._subtitles(image, seconds)
         status, position = self.panels.status(index, round(seconds * 10), lost)
+        if self.layout.kind == "h":
+            position=(position[0]+self.layout.px(self.p["card"][0]-self.card_x(seconds)),position[1])
         image.alpha_composite(status, position)
         return image.convert("RGB")
 
@@ -321,6 +388,7 @@ def run(clip: Path, out: Path, windows: Sequence[Mapping[str, Any]], points: Map
             total = round(total_input / input_fps * fps)
             geometry = Layout.create(kind, settings, source_size or frame_size)
             painter = Composer(settings, geometry, windows, points, events, judgments, narration, transcript, title=title, sources=_sources(out, settings, config, lang), lang=lang, blur=blur, subtitles=subtitles, config=config, shots=read("shots.json", []))
+            (out / f"layout_{kind}.json").write_text(json.dumps(list(painter.placements.values()), ensure_ascii=False, indent=2))
             if debug_layout:
                 painter.debug_layout(clip, out)
             raw = out / f"render_{kind}_noaudio.mp4"

@@ -38,6 +38,24 @@ def test_commentary_height_is_measured_once_for_the_whole_video():
     assert settings["v"]["commentary"][3] == 98
 
 
+def test_cut_clears_old_labels_and_card_moves_only_at_boundary():
+    config=load_config();settings=config["render"]
+    points={"pose":np.tile(np.array([.5,.5,0,1]),(90,33,1)),"hands":np.full((90,2,21,3),np.nan),"fps":30}
+    shots=[{"index":1,"t0":0,"t1":1,"label":"target","far":False,"target_box":[100,100,500,700]}, {"index":2,"t0":1,"t1":3,"label":"target","far":False,"target_box":[750,100,1130,700]}]
+    actions=[{"id":"old","t0":.1,"t1":.8,"type":"raise","limb":"right_hand","magnitude":"large","shot_index":1},{"id":"new","t0":1,"t1":2,"type":"raise","limb":"left_hand","magnitude":"large","shot_index":2}]
+    painter=Composer(settings,Layout.create("h",settings,(1280,720)),[{"id":"W0","t0":0,"t1":3}],points,actions,{}, {},{},title="Title",sources="Source",lang="en",blur=[],subtitles=False,config=config,shots=shots)
+    assert painter.card_x(.9)==968
+    assert painter.card_x(1)==968
+    assert painter.card_x(1.2)==pytest.approx(500)
+    assert painter.card_x(1.4)==pytest.approx(32)
+    assert painter.card_x(2.5)==32
+    source=Image.new("RGB",(1280,720))
+    painter.frame(source,1.2,36)
+    assert painter.audit["labels"]==[]
+    painter.frame(source,1.5,45)
+    assert [label["event"] for label in painter.audit["labels"]]==["new"]
+
+
 def test_run_defaults_to_render_and_state_remains_available(monkeypatch, capsys):
     import sys
     from jevtells.cli import _arguments
