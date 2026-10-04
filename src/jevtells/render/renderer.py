@@ -219,7 +219,10 @@ def _sources(out: Path, settings: Mapping[str, Any], config: Mapping[str, Any], 
 
 def _signature(out: Path, values: Mapping[str, Any]) -> str:
     digest = hashlib.sha256(json.dumps(values, sort_keys=True, ensure_ascii=False).encode())
-    for name in ("clip.mp4", "windows.json", "keypoints.npz", "actions.json", "judgments.json", "narration.json", "transcript.json", "judge_meta.json", "narrate_meta.json"):
+    for path in sorted(Path(__file__).parent.rglob("*.py")):
+        digest.update(str(path.relative_to(Path(__file__).parent)).encode())
+        digest.update(path.read_bytes())
+    for name in ("clip.mp4", "windows.json", "keypoints.npz", "actions.json", "judgments.json", "narration.json", "transcript.json", "judge_meta.json", "narrate_meta.json", "shots.json"):
         path = out / name
         if path.exists():
             with path.open("rb") as handle:

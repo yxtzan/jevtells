@@ -170,6 +170,7 @@ def test_cli_render_only_never_visits_analysis_or_api_stages(tmp_path, monkeypat
     monkeypatch.setattr(cli.render, "run", lambda *args, **kwargs: calls.append(kwargs))
     cli.main()
     assert len(calls) == 1 and calls[0]["title"] == "Changed title"
+    assert calls[0]["force"] is True
     assert set(json.loads((output / "run_meta.json").read_text())["stage_times_s"]) == {"render"}
 
 

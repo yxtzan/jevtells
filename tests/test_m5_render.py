@@ -52,6 +52,22 @@ def test_run_defaults_to_render_and_state_remains_available(monkeypatch, capsys)
     assert "default: render" in capsys.readouterr().out
 
 
+def test_render_signature_changes_when_source_changes(tmp_path, monkeypatch):
+    from pathlib import Path
+    import jevtells.render.renderer as renderer
+    source = tmp_path / "renderer.py"
+    source.write_text("initial code")
+    monkeypatch.setattr(renderer, "__file__", str(source))
+    first = renderer._signature(tmp_path, {"title": "same"})
+    assert renderer._signature(tmp_path, {"title": "same"}) == first
+    source.write_text("changed code")
+    assert renderer._signature(tmp_path, {"title": "same"}) != first
+    first = renderer._signature(tmp_path, {"title": "same"})
+    (tmp_path / "nested").mkdir()
+    (tmp_path / "nested/geometry.py").write_text("new source")
+    assert renderer._signature(tmp_path, {"title": "same"}) != first
+
+
 @pytest.mark.parametrize("kind", ["h", "v"])
 def test_commentary_and_quote_switch_together_without_overlap(kind, monkeypatch):
     config = load_config()
