@@ -32,3 +32,34 @@ def test_qualitative_highlights_thresholds_and_fallback_has_no_digits():
     assert line['line'] == '双手同时下压，自信度明显上升'
     assert validation_errors(line, facts, [], '', 'zh') == []
     assert any('digits' in e for e in validation_errors({'line':'升到0.8','quote':'hello world'}, facts, [], '', 'zh'))
+
+
+def test_earlier_retry_cannot_rewrite_a_fixed_later_line(tmp_path):
+    class Client:
+        calls=0
+        def chat(self,messages,model,**kwargs):
+            self.calls+=1
+            lines=[{'id':'W1','line':'芯片架构发生变化','quote':'next phrase'}]
+            if self.calls==1:
+                lines += [{'id':'W0','line':'数字0.8','quote':'hello world'}]
+            elif self.calls==2:
+                lines=[{'id':'W0','line':'芯片架构迎来重构','quote':'hello world'}]
+            else:
+                assert '芯片架构发生变化' in messages[0]['content']
+                assert 'fixed later line' in messages[0]['content']
+                lines=[{'id':'W0','line':'逐层解释计算结构','quote':'hello world'}]
+            return {'raw':{'choices':[{'message':{'content':json.dumps({'lines':lines})}}]},'cost':.001}
+    states={key:{'subtitle':{'current':sub}} for key,sub in [('W0','hello world'),('W1','next phrase')]}
+    result=run(states,{},tmp_path,client=Client())
+    assert result['W1']['line']=='芯片架构发生变化'
+    assert result['W0']['line']=='逐层解释计算结构'
+    assert json.loads((tmp_path/'narrate_meta.json').read_text())['fallbacks']==0
+
+
+def test_unavailable_facts_and_one_word_quote_do_not_fabricate_fallback(tmp_path):
+    class Offline:
+        def chat(self,*args,**kwargs):raise TimeoutError('offline')
+    result=run({'W0':{'subtitle':{'current':'Hello'}}},{},tmp_path,client=Offline())
+    assert result['W0'] is None
+    meta=json.loads((tmp_path/'narrate_meta.json').read_text())
+    assert meta['unavailable']==1 and meta['calls']==meta['failed']==1

@@ -87,8 +87,8 @@ def validation_errors(parsed: Mapping[str, Any], facts: Mapping[str, Any], previ
                 errors.append("English trend/extreme absent from facts.highlights")
     if not allow_repeated_opening and any(line[:4] == old[:4] for old in previous):
         errors.append(f"first four characters repeat an earlier line: {line[:4]!r}. Change the opening, still using only the given facts")
-    if lang == "zh" and not allow_repeated_opening:
-        if sum(old[:2] == line[:2] for old in previous) >= 2:
+    if lang == "zh":
+        if not allow_repeated_opening and sum(old[:2] == line[:2] for old in previous) >= 2:
             errors.append("first two characters may appear at most twice across the video")
         before_quote = re.search(r"(.{2})「", line)
         if before_quote:

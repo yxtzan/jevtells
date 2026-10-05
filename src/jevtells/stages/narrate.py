@@ -146,14 +146,32 @@ def run(states: Mapping[str, Any] | None, judgments: Mapping[str, Any] | None, o
                 raise
             break
         failures = {}
+        fixed = dict(accepted)
         previous = []
-        for key in active:
-            parsed = accepted.get(key) or candidates.get(key, {})
+        ordered = list(active)
+        for index, key in enumerate(ordered):
+            if key in fixed:
+                previous.append(fixed[key]["line"])
+                continue
+            parsed = candidates.get(key, {})
             errors = validation_errors(parsed, active[key], previous, str(states[key].get("speaker", "")), lang)
+            line = str(parsed.get("line", ""))
+            future = [fixed[k]["line"] for k in ordered[index+1:] if k in fixed]
+            if any(line[:4] == old[:4] for old in future):
+                errors.append("first four characters conflict with a fixed later line")
+            if lang == "zh":
+                if sum(old[:2] == line[:2] for old in previous+future) >= 2:
+                    errors.append("first two characters conflict with fixed lines")
+                opening = re.search(r"(.{2})「", line)
+                before = [re.search(r"(.{2})「", old) for old in previous+future]
+                if opening and sum(match is not None and match[1] == opening[1] for match in before) >= 2:
+                    errors.append("two characters before 「 conflict with fixed lines")
+                next_opening = re.search(r"(.{2})「", future[0]) if future else None
+                if opening and next_opening and opening[1] == next_opening[1]:
+                    errors.append("two characters before 「 conflict with an adjacent fixed line")
             if errors:
                 failures[key] = errors
                 stats["windows"][key]["failures"].append(errors)
-                accepted.pop(key, None)
             else:
                 accepted[key] = parsed
                 previous.append(parsed["line"])
