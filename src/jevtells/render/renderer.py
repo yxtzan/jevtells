@@ -151,6 +151,7 @@ class Composer:
             frame_core = body_zones(np.asarray(self.points["pose"])[index], self.layout.source, self.visibility)
             face = frame_core.get("face_raw")
             face = list(self.layout.source_rect((face[0],face[1],face[2]-face[0],face[3]-face[1]))) if face else None
+            faces = [list(self.layout.source_rect((f[0],f[1],f[2]-f[0],f[3]-f[1]))) for f in faces_at(self.all_poses[index],self.layout.source,self.visibility,raw=True)]
             mid = self.layout.source_point(frame_core.get("midline", self.layout.source[0]/2), 0)[0]
             wi, _ = window_at(self.windows, seconds)
             lost = not np.isfinite(np.asarray(self.points["pose"])[index,:,:2]).any()
@@ -166,7 +167,9 @@ class Composer:
                 if not np.isfinite(xy).all():continue
                 sprite=self.label_sprite(event,slot)
                 has_label = True
-                samples[slot].append({"anchor":self.layout.source_point(xy[0]*self.layout.source[0],xy[1]*self.layout.source[1]),"face":face,"midline":mid,"size":sprite.size,"zoom":zoom,"offset":self.layout.px(self.p["label_size"]*self.settings["components"]["line_height"]+2*self.settings["label"]["padding"][1])/2})
+                for anchor_xy in (xy,self.anchors[anchor_slot][index]):
+                    if not np.isfinite(anchor_xy).all():continue
+                    samples[slot].append({"anchor":self.layout.source_point(anchor_xy[0]*self.layout.source[0],anchor_xy[1]*self.layout.source[1]),"face":face,"faces":faces,"midline":mid,"size":sprite.size,"zoom":zoom,"offset":self.layout.px(self.p["label_size"]*self.settings["components"]["line_height"]+2*self.settings["label"]["padding"][1])/2})
             if has_label:
                 if face: frame_faces.append(face)
                 frame_mids.append(mid)
@@ -194,7 +197,7 @@ class Composer:
         face=[min(f[0] for f in frame_faces),min(f[1] for f in frame_faces),max(f[2] for f in frame_faces),max(f[3] for f in frame_faces)] if frame_faces else None
         vx,vy,vw,vh=self.layout.video
         cfg=self.settings.get("layout",{})
-        result=select_positions(self.layout.rect((vx,vy,vw,vh)),target,[zone["rect"] for zone in zones],sizes,anchors,margin=self.layout.px(cfg.get("safe_margin",24)),gap=self.layout.px(cfg.get("stack_gap",12)),step=self.layout.px(cfg.get("candidate_step",12)),soft=soft,samples=samples,midline=midline,face=face,exemption=self.layout.px(60),fraction=self.settings["label"]["leader_fraction"])
+        result=select_positions(self.layout.rect((vx,vy,vw,vh)),target,[zone["rect"] for zone in zones],sizes,anchors,margin=self.layout.px(cfg.get("safe_margin",24)),gap=self.layout.px(cfg.get("stack_gap",12)),step=self.layout.px(cfg.get("candidate_step",12)),soft=soft,samples=samples,midline=midline,face=face,exemption=self.layout.px(60),fraction=self.settings["label"]["leader_fraction"],max_face_crossing_ratio=float(cfg.get('max_face_crossing_ratio',0)),fixed_leader_width=True)
         return {"shot_index":shot["index"],"t0":shot["t0"],"t1":shot["t1"],"sizes":sizes,"anchors":anchors,"sample_counts":{slot:len(v) for slot,v in samples.items()},"forbidden":zones,"card_side":self.card_sides.get(int(shot["index"])),**result}
 
     def video_layout(self, seconds: float) -> Layout:
@@ -479,6 +482,12 @@ class Composer:
                     if compact is None:
                         compact = self.compact_card(index-1 if index else index,'collapsed',(rect[0],rect[1],rect[2],self.settings['layout']['compact_card_height']))
                     image.alpha_composite(opacity(compact,1-opened))
+                elif changed and elapsed < duration and compact is not None:
+                    # Mini cards and collapsed tags share one row; keep their
+                    # safe geometry while changing the content over 300ms.
+                    old_mode = 'collapsed' if was_collapsed else 'mini'
+                    old_compact = self.compact_card(index-1 if index else index,old_mode,rect)
+                    image.alpha_composite(Image.blend(old_compact,compact,ease_in_out_cubic(elapsed/duration)))
                 elif compact is not None:
                     image.alpha_composite(compact)
                 else:

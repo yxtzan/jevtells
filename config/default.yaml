@@ -201,6 +201,7 @@ render:
     footer_size: 13
     footer_top: 8
   layout:
+    max_face_crossing_ratio: 0.0
     card_left_x: 32
     safe_margin: 24
     stack_gap: 12

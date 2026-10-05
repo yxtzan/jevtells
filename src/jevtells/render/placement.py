@@ -30,7 +30,7 @@ def leader(rect: Sequence[float], anchor: Sequence[float], fraction: float = .35
     return [start, (start[0]+(anchor[0]-start[0])*fraction,start[1]), tuple(anchor)]
 
 
-def select_positions(video: Sequence[float], target: Sequence[float] | None, forbidden: Sequence[Sequence[float]], sizes: Mapping[str, Sequence[float]], anchors: Mapping[str, Sequence[float]], fallback: Mapping[str, Sequence[float]] | None = None, *, margin: float = 24, gap: float = 12, step: float = 12, line_ratio: float = .45, soft: Sequence[Sequence[float]] = (), protected: Sequence[Sequence[float]] = (), samples: Mapping[str, Sequence[Mapping[str, Any]]] | None = None, midline: float | None = None, face: Sequence[float] | None = None, exemption: float = 60, fraction: float = .35, start_offsets: Mapping[str, float] | None = None) -> dict[str, Any]:
+def select_positions(video: Sequence[float], target: Sequence[float] | None, forbidden: Sequence[Sequence[float]], sizes: Mapping[str, Sequence[float]], anchors: Mapping[str, Sequence[float]], fallback: Mapping[str, Sequence[float]] | None = None, *, margin: float = 24, gap: float = 12, step: float = 12, line_ratio: float = .45, soft: Sequence[Sequence[float]] = (), protected: Sequence[Sequence[float]] = (), samples: Mapping[str, Sequence[Mapping[str, Any]]] | None = None, midline: float | None = None, face: Sequence[float] | None = None, exemption: float = 60, fraction: float = .35, start_offsets: Mapping[str, float] | None = None, max_face_crossing_ratio: float = 1.0, fixed_leader_width: bool = False) -> dict[str, Any]:
     """Rank same-side legal, opposite legal, relaxed, then forced shot positions.
 
     Legacy fallback and length limits are deliberately unused. Every measured
@@ -75,17 +75,22 @@ def select_positions(video: Sequence[float], target: Sequence[float] | None, for
             path=leader(rect,anchor,fraction)
             offset=(start_offsets or {}).get(slot,height/2)
             def sample_path(v):
-                w=v.get('size',[width,height])[0]*v.get('zoom',1)
+                w=width if fixed_leader_width else v.get('size',[width,height])[0]*v.get('zoom',1)
                 off=v.get('offset',offset)*v.get('zoom',1)
                 a=v['anchor'];start=(x+w if a[0]>=x+w/2 else x,y+round(off))
                 return [start,(round(start[0]+(a[0]-start[0])*fraction),start[1]),a]
             frames=values or [{'anchor':anchor,'face':face or (protected[0] if protected else None),'midline':midline}]
             # Evaluate only hard-safe candidates; forced ones need face overlap score.
             passing=0
+            face_hits=0
             if not hits:
                 for v in frames:
-                    f,m=line_flags(sample_path(v),v.get('face'),v.get('midline',midline),exemption)
+                    flags=[line_flags(sample_path(v),f,v.get('midline',midline),exemption) for f in v.get('faces',[v.get('face')]) or [None]]
+                    f,m=any(flag[0] for flag in flags),any(flag[1] for flag in flags)
+                    face_hits+=f
                     passing+=not (f or m)
+            if not hits and face_hits/len(frames)>max_face_crossing_ratio:
+                continue
             rate=passing/len(frames)
             rank=3 if hits else (0 if same else 1) if rate>=.95 else 2 if same else None
             if rank is None:

@@ -69,3 +69,16 @@ def test_face_audit_includes_other_people_and_cards():
     assert frame_violations(trace)[0]['slot']=='card'
     trace={'leader_zones':[{'name':'face','rect':[200,200,250,250]},{'name':'face','rect':[20,20,40,40]}],'labels':[{'slot':'a','event':'x','leader':[[0,0],[50,50]],'rect':[0,0,5,5]}]}
     assert leader_violations(trace)[0]['zone']=='face'
+
+
+def test_placement_checks_other_faces_at_every_display_sample():
+    from jevtells.render.placement import select_positions
+    from jevtells.render.layout_audit import line_flags
+    face = [180,80,260,160]
+    samples = {'left': [{'anchor':[140,220],'midline':250,'faces':[face],'face':None}],
+               'right': [{'anchor':[380,220],'midline':250,'faces':[face],'face':None}]}
+    result = select_positions([0,0,500,400],None,[],{'left':[80,40],'right':[80,40]},
+                              {'left':[140,220],'right':[380,220]},samples=samples,
+                              midline=250,step=36,margin=20,gap=10,
+                              max_face_crossing_ratio=0,fixed_leader_width=True)
+    assert all(not line_flags(v['leader'],face,None,60)[0] for v in result['selected'].values())
