@@ -97,7 +97,7 @@ def run(states: Mapping[str, Any] | None, judgments: Mapping[str, Any] | None, o
     if destination.exists() and not force:
         meta_path = out / "narrate_meta.json"
         meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
-        if meta.get("lang") == lang and meta.get("facts_version") == 4:
+        if meta.get("lang") == lang and meta.get("facts_version") == 5:
             return json.loads(destination.read_text(encoding="utf-8"))
     if states is None:
         states = json.loads((out / "states.json").read_text(encoding="utf-8"))
@@ -137,14 +137,15 @@ def run(states: Mapping[str, Any] | None, judgments: Mapping[str, Any] | None, o
             stats["known_cost"] = sum(r["cost"] or 0 for r in request_records)
         if not error:
             destination.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
-        (out / ("narrate_error_meta.json" if error else "narrate_meta.json")).write_text(json.dumps({**stats, "model": model, "reasoning": reasoning, "max_tokens": max_tokens, "lang": lang, "facts_version": 4}, ensure_ascii=False, indent=2), encoding="utf-8")
+        (out / ("narrate_error_meta.json" if error else "narrate_meta.json")).write_text(json.dumps({**stats, "model": model, "reasoning": reasoning, "max_tokens": max_tokens, "lang": lang, "facts_version": 5}, ensure_ascii=False, indent=2), encoding="utf-8")
     for attempt in range(retries + 1):
         if not pending:
             break
         stats["retries"] = attempt
         for key in pending:
             stats["windows"][key]["retries"] = attempt
-        prompt = template.format(facts_json=json.dumps(list(active.values()), ensure_ascii=False), fixed_lines=json.dumps(accepted, ensure_ascii=False), failures_json=json.dumps(failures, ensure_ascii=False), requested_ids=json.dumps(pending), language_name="English" if lang == "en" else "Chinese")
+        template_rules = "\nM6-fix rules: In the first_judged window omit directional words (升、降、回落、走高、走低、转为). Use speech_rate band only, no 每秒 or quantified amounts (including Chinese numerals). 大幅/大动作/幅度大 requires a measured_events large event with identical action and named hand. If subtitle contains Chinese, 「」 content must be an exact unspaced substring of subtitle; use original Chinese rather than translation. If hands_mostly_not_visible, describe missing visibility, never no notable gestures. Uncertain categories are absent from judgments and must not be invented.\n"
+        prompt = template_rules + template.format(facts_json=json.dumps(list(active.values()), ensure_ascii=False), fixed_lines=json.dumps(accepted, ensure_ascii=False), failures_json=json.dumps(failures, ensure_ascii=False), requested_ids=json.dumps(pending), language_name="English" if lang == "en" else "Chinese")
         try:
             request_max_tokens = max_tokens
             for length_attempt in range(2):

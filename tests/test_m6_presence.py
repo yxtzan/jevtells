@@ -87,5 +87,7 @@ def test_split_windows_refresh_cached_voice_metrics_from_sample_times(tmp_path):
     result=refresh_window_metrics(features,windows,transcript,tmp_path)
     assert set(result['metrics_by_window'])=={'W00','W01'}
     for window in windows:
-        assert result['metrics_by_window'][window['id']]==window_voice_metrics(features,window,transcript)
+        measured = dict(result['metrics_by_window'][window['id']])
+        assert measured.pop('speech_rate_band')=='适中'
+        assert measured==window_voice_metrics(features,window,transcript)
     assert result['t']==features['t'] and features['metrics_by_window']=={'stale':{'loudness_delta_db':99}}

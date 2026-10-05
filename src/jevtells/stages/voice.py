@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -91,6 +92,13 @@ def window_voice_metrics(
     words = _words_in_window(transcript, t0, t1)
     word_span = _union_duration(words)
     speech_rate = float(len(words) / word_span) if word_span > 0.0 else 0.0
+    chinese = str((transcript or {}).get('language','')).startswith('zh')
+    characters = 0
+    for segment in (transcript or {}).get('segments', []):
+        for word in segment.get('words') or []:
+            if float(word['t0']) < t1 and float(word['t1']) > t0:
+                characters += len(re.findall(r'[\u3400-\u9fff]',str(word.get('w',''))))
+    measured_rate = float(characters/word_span) if chinese and word_span else speech_rate
     window_duration = max(0.0, t1 - t0)
     pause_ratio = float(max(0.0, window_duration - word_span) / window_duration) if window_duration > 0.0 else 0.0
     few_cut = float(config_value(settings, "pauses_few_max_ratio", 0.20))
@@ -102,6 +110,8 @@ def window_voice_metrics(
         "pitch_variation": pitch_band,
         "word_count": len(words),
         "speech_rate_wps": speech_rate,
+        "speech_rate": measured_rate,
+        "speech_rate_unit": "characters/s" if chinese else "words/s",
         "pause_ratio": pause_ratio,
         "pauses": pause_band,
     }
@@ -113,9 +123,10 @@ def format_voice_text(metrics: Mapping[str, Any]) -> str:
     loudness = metrics.get("loudness_delta_db")
     loudness_text = "unknown" if loudness is None else f"{float(loudness):+.1f} dB vs clip baseline"
     pitch_text = str(metrics.get("pitch_variation", "unknown"))
-    rate = float(metrics.get("speech_rate_wps", 0.0))
+    rate = float(metrics.get("speech_rate", metrics.get("speech_rate_wps", 0.0)))
+    unit = metrics.get("speech_rate_unit", "words/s")
     pause_text = str(metrics.get("pauses", "unknown"))
-    return f"loudness {loudness_text}; {pitch_text} pitch variation; speech rate {rate:.1f} words/s; {pause_text} pauses"
+    return f"loudness {loudness_text}; {pitch_text} pitch variation; speech rate {rate:.1f} {unit}; {pause_text} pauses"
 
 
 def run(
@@ -205,6 +216,15 @@ def refresh_window_metrics(features: dict[str, Any], windows: list[Mapping[str, 
     if not features.get('t') or not features.get('rms_db'):
         return features
     result = {**features, 'metrics_by_window': {str(window['id']): window_voice_metrics(features, window, transcript, config) for window in windows}}
+    clip_end = float(features['t'][-1]) + float(features.get('hop_seconds', .05))
+    clip_metrics = window_voice_metrics(features, {'t0':0.,'t1':clip_end}, transcript, config)
+    result.update({k:clip_metrics[k] for k in ('speech_rate','speech_rate_unit','speech_rate_wps','pause_ratio','pauses')})
+    baseline = result['speech_rate']
+    slow = float((config or {}).get('voice',{}).get('relative_rate_slow', .85))
+    fast = float((config or {}).get('voice',{}).get('relative_rate_fast', 1.15))
+    for metrics in result['metrics_by_window'].values():
+        rate = metrics['speech_rate']
+        metrics['speech_rate_band'] = '偏慢' if baseline and rate < baseline*slow else '偏快' if baseline and rate > baseline*fast else '适中'
     if result != features:
         (out / 'voice_features.json').write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
     return result

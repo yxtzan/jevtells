@@ -423,7 +423,7 @@ def main() -> None:
         finish()
         return
     stage_start = time.perf_counter()
-    states = _invoke(state.run, windows, voice_features, scene_text, arguments.speaker, output, force_stage("state"), points, actions=actions_result, config=config, transcript=transcript)
+    states = _invoke(state.run, windows, voice_features, scene_text, arguments.speaker, output, force_stage("state"), points, actions=actions_result, config=config, transcript=audio_transcript)
     stage_times["state"] = time.perf_counter() - stage_start
     stage_start = time.perf_counter()
     debug_kwargs = {"detections": detections, "actions": actions_result, "config": config}

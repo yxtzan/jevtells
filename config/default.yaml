@@ -54,6 +54,8 @@ windows:
   max_seconds: 5.0
 
 voice:
+  relative_rate_slow: 0.85
+  relative_rate_fast: 1.15
   sample_rate: 16000
   hop_seconds: 0.05
   f0_min_hz: 65.0
@@ -84,6 +86,10 @@ actions:
   min_action_duration: 0.20
   movement_threshold: 0.12
   state_threshold: 0.65
+  review_limit: null
+  hands_missing_ratio: 0.50
+  pinch_tip_palm_ratio: 0.35
+  pinch_extended_fingers: 2
   fist_max_openness: 0.20
   fist_max_tip_palm_ratio: 1.00
   point_frame_ratio: 0.80
@@ -133,7 +139,11 @@ other_speaker_overlap: 0.5
 stop_on_api_error: true
 
 # Dimensions are CSS/design pixels. Layout.scale multiplies every dimension.
+judgment:
+  min_confidence: 0.40
+
 render:
+  uncertain_arc_alpha: 0.40
   reframe:
     max_offset: 0.08
     subtitle_strip: 0.20
@@ -248,6 +258,7 @@ render:
     commentary_in_seconds: 0.25
     commentary_out_seconds: 0.15
     commentary_offset: 12
+    label_replace_seconds: 0.10
     label_in_seconds: 0.15
     label_hold_seconds: 0.80
     label_out_seconds: 0.20
