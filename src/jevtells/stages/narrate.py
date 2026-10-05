@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -120,8 +121,7 @@ def run(states: Mapping[str, Any] | None, judgments: Mapping[str, Any] | None, o
         active_client.on_response = account
     raw_dir = out / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
-    for path in raw_dir.glob("narrate_*.json"):
-        path.unlink()
+    generation = time.time_ns()
     results = {key: None for key in facts_by_id}
     stats = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "cost": 0.0, "failed": 0, "retries": 0, "fallbacks": 0, "windows": {key: {"retries": 0, "fallback": False, "failures": []} for key in active}, "skipped": {key: "speaker_other" for key in facts_by_id if key not in active}}
     accepted = {}
@@ -147,7 +147,8 @@ def run(states: Mapping[str, Any] | None, judgments: Mapping[str, Any] | None, o
         try:
             response = active_client.chat([{"role": "user", "content": prompt}], model, response_format={"type": "json_object"}, max_tokens=int(settings.get("max_tokens", 1600)), temperature=0.2, reasoning={"enabled": False})
             raw = response.get("raw", response.get("response", response))
-            (raw_dir / f"narrate_batch_{attempt}.json").write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+            (raw_dir / f"narrate_batch_{generation}_{attempt}.json").write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+            stats.setdefault("raw_responses", []).append(str(raw_dir / f"narrate_batch_{generation}_{attempt}.json"))
             usage = response.get("usage") or {}
             stats["prompt_tokens"] += int(usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0)
             stats["completion_tokens"] += int(usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0)

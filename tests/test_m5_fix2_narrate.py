@@ -92,6 +92,8 @@ def test_failed_generation_preserves_previous_narration_cache(tmp_path):
     original = {'W0': {'line':'之前成功的解说','quote':'hello world'}}
     (tmp_path/'narration.json').write_text(json.dumps(original))
     (tmp_path/'narrate_meta.json').write_text('{"model":"old/model"}')
+    (tmp_path/'raw').mkdir()
+    (tmp_path/'raw/narrate_batch_0.json').write_text('{"previous":true}')
     client=OpenRouterClient(api_key='secret',transport=lambda *args:(400,'{"error":"mandatory reasoning"}'))
     with pytest.raises(OpenRouterError):
         run({'W0':{'subtitle':{'current':'hello world'}}},{},tmp_path,force=True,client=client)
@@ -99,4 +101,5 @@ def test_failed_generation_preserves_previous_narration_cache(tmp_path):
     assert json.loads((tmp_path/'narrate_meta.json').read_text())['model']=='old/model'
     failed=json.loads((tmp_path/'narrate_error_meta.json').read_text())
     assert failed['cost'] is None and failed['http_calls']==1
+    assert json.loads((tmp_path/'raw/narrate_batch_0.json').read_text())=={'previous':True}
     assert len(list((tmp_path/'raw').glob('openrouter_error_*.json')))==1
