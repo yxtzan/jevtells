@@ -198,3 +198,13 @@ def run(
         }
     destination.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     return result
+
+
+def refresh_window_metrics(features: dict[str, Any], windows: list[Mapping[str, Any]], transcript: Mapping[str, Any], out: Path, config: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Rebind cached acoustic samples after presence edits renumber windows."""
+    if not features.get('t') or not features.get('rms_db'):
+        return features
+    result = {**features, 'metrics_by_window': {str(window['id']): window_voice_metrics(features, window, transcript, config) for window in windows}}
+    if result != features:
+        (out / 'voice_features.json').write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
+    return result

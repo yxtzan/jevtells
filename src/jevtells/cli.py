@@ -384,6 +384,7 @@ def main() -> None:
     if marked != windows:
         windows = marked
         (output / "windows.json").write_text(json.dumps(windows, ensure_ascii=False, indent=2), encoding="utf-8")
+    voice_features = voice.refresh_window_metrics(voice_features, windows, transcript, output, config)
     stage_times["segment"] = time.perf_counter() - stage_start
     if arguments.until == "segment":
         return

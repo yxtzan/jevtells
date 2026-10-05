@@ -77,3 +77,15 @@ def test_rendered_offscreen_message_is_gray_and_other_speaker_wins(monkeypatch,l
     monkeypatch.setattr(module,'draw_fitted',capture)
     panels.commentary(0)
     assert (tr['ui']['other_speaker' if other else 'target_offscreen'],settings['colors']['muted']) in seen
+
+
+def test_split_windows_refresh_cached_voice_metrics_from_sample_times(tmp_path):
+    from jevtells.stages.voice import refresh_window_metrics, window_voice_metrics
+    features={'t':[0,.5,1,1.5], 'rms_db':[-10,-10,-30,-30], 'f0_hz':[100]*4, 'voiced':[True]*4, 'baseline_rms_db':-20, 'hop_seconds':.5, 'metrics_by_window':{'stale':{'loudness_delta_db':99}}}
+    windows=[{'id':'W00','t0':0,'t1':1},{'id':'W01','t0':1,'t1':2}]
+    transcript={'segments':[{'words':[{'t0':0,'t1':.5,'w':'one'},{'t0':1,'t1':1.5,'w':'two'}]}]}
+    result=refresh_window_metrics(features,windows,transcript,tmp_path)
+    assert set(result['metrics_by_window'])=={'W00','W01'}
+    for window in windows:
+        assert result['metrics_by_window'][window['id']]==window_voice_metrics(features,window,transcript)
+    assert result['t']==features['t'] and features['metrics_by_window']=={'stale':{'loudness_delta_db':99}}
