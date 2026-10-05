@@ -50,7 +50,7 @@ def collect(directory: Path, identifier: str, group: str) -> dict[str, Any]:
     api=metadata.get('api',{})
     calls=sum(stage.get('calls',0) for name,stage in api.items() if isinstance(stage,dict))
     duration=float(metadata['duration_s'])
-    return {'id':identifier,'group':group,'duration_s':duration,'target_lock_rate':lock_rate,'hand_visibility_rate':hand_rate,'windows':len(read(directory,'windows.json',[])),'events':len(actions),'events_by_type':json.dumps(dict(Counter(action['type'] for action in actions)),sort_keys=True),'displayed_labels':len(displayed),'far_shots':sum(bool(shot.get('far')) for shot in read(directory,'shots.json',[])),'api_calls':calls,'api_cost':api.get('total_cost'),'narration_retries':narration.get('retries',0),'narration_fallbacks':narration.get('fallbacks',0),'narration_fallback_ratio':narration.get('fallbacks',0)/count if count else 0,'layout_violation_frames':sum(item['violation_frames'] for item in checks),'layout_fallback_frames':sum(item['fallback_frames'] for item in checks),'render_h_seconds':rendered['h']['elapsed_s'],'render_v_seconds':rendered['v']['elapsed_s'],'events_per_minute':len(actions)*60/duration if duration else None,'output':str(directory),'alerts':''}
+    return {'id':identifier,'group':group,'duration_s':duration,'target_lock_rate':lock_rate,'hand_visibility_rate':hand_rate,'windows':len(read(directory,'windows.json',[])),'events':len(actions),'events_by_type':json.dumps(dict(Counter(action['type'] for action in actions)),sort_keys=True),'displayed_labels':len(displayed),'far_shots':sum(bool(shot.get('far')) for shot in read(directory,'shots.json',[])),'api_calls':calls,'api_cost':api.get('total_cost'),'narration_retries':narration.get('retries',0),'narration_fallbacks':narration.get('fallbacks',0),'narration_fallback_ratio':narration.get('fallbacks',0)/count if count else 0,'leader_face_frames':sum(item.get('leader_face_frames',0) for item in checks),'leader_torso_frames':sum(item.get('leader_torso_frames',0) for item in checks),'suppressed_label_frames':sum(item.get('suppressed_label_frames',0) for item in checks),'blocked_face_leader_frames':sum(item.get('blocked_face_leader_frames',0) for item in checks),'layout_violation_frames':sum(item['violation_frames'] for item in checks),'layout_fallback_frames':sum(item['fallback_frames'] for item in checks),'render_h_seconds':rendered['h']['elapsed_s'],'render_v_seconds':rendered['v']['elapsed_s'],'events_per_minute':len(actions)*60/duration if duration else None,'output':str(directory),'alerts':''}
 
 
 def alerts(rows: list[dict[str, Any]], settings: dict[str, Any]) -> None:
@@ -64,6 +64,7 @@ def alerts(rows: list[dict[str, Any]], settings: dict[str, Any]) -> None:
             if row['target_lock_rate']<float(settings.get('min_lock_rate',.8)): reasons.append('target lock <80%')
             if row['narration_fallback_ratio']>float(settings.get('max_fallback_ratio',.3)): reasons.append('narration fallback >30%')
             if row['layout_violation_frames']>0: reasons.append('layout collisions')
+            if row.get('leader_face_frames',0)>0: reasons.append('leaders cross face')
             if len(rates)>=2 and median>0 and (row['events_per_minute']>median*factor or row['events_per_minute']<median/factor): reasons.append('event rate outside group median factor')
             row['alerts']='; '.join(reasons)
 
@@ -74,13 +75,13 @@ def write_summary(directory: Path, rows: list[dict[str, Any]]) -> None:
         writer=csv.DictWriter(handle,fieldnames=fields);writer.writeheader();writer.writerows(rows)
     content=['# Batch evaluation','', 'Metrics below describe the retained real API stage records, including retries. Cached stages make no new API calls. Render times are from the most recent actual encode, not cache lookup time. Each group is summarized separately; example holdout fixtures are not independent new videos.','']
     for group in ('tune','holdout'):
-        content += [f'## {group}','', '| ID | seconds | lock | hands | windows | events / kinds | labels | far | API calls / cost | retries / fallback | H / V encode s | layout violations / fallback frames | alerts |','|---|---:|---:|---:|---:|---|---:|---:|---|---|---|---|---|']
+        content += [f'## {group}','', '| ID | seconds | lock | hands | windows | events / kinds | labels | far | API calls / cost | retries / fallback | H / V encode s | layout violations / fallback frames | face / torso crossing frames | blocked label / face-leader frames | alerts |','|---|---:|---:|---:|---:|---|---:|---:|---|---|---|---|---|---|---|']
         for row in rows:
             if row['group']!=group: continue
             if 'error' in row:
                 content.append(f"| {row['id']} | BLOCKED: {row['error']} |")
                 continue
-            content.append(f"| {row['id']} | {row['duration_s']:.2f} | {row['target_lock_rate']:.1%} | {row['hand_visibility_rate']:.1%} | {row['windows']} | {row['events']} / {row['events_by_type']} | {row['displayed_labels']} | {row['far_shots']} | {row['api_calls']} / {row['api_cost']} | {row['narration_retries']} / {row['narration_fallbacks']} | {row['render_h_seconds']:.2f} / {row['render_v_seconds']:.2f} | {row['layout_violation_frames']} / {row['layout_fallback_frames']} | {row['alerts']} |")
+            content.append(f"| {row['id']} | {row['duration_s']:.2f} | {row['target_lock_rate']:.1%} | {row['hand_visibility_rate']:.1%} | {row['windows']} | {row['events']} / {row['events_by_type']} | {row['displayed_labels']} | {row['far_shots']} | {row['api_calls']} / {row['api_cost']} | {row['narration_retries']} / {row['narration_fallbacks']} | {row['render_h_seconds']:.2f} / {row['render_v_seconds']:.2f} | {row['layout_violation_frames']} / {row['layout_fallback_frames']} | {row.get('leader_face_frames',0)} / {row.get('leader_torso_frames',0)} | {row.get('suppressed_label_frames',0)} / {row.get('blocked_face_leader_frames',0)} | {row['alerts']} |")
         content.append('')
     content += ['## Overviews','']
     for row in rows:
