@@ -126,7 +126,7 @@ def _run_pose(clip: Path, output: Path, force: bool, config: Mapping[str, Any]) 
 
 
 def _run_track(detections: dict[str, Any], output: Path, anchors: list[tuple[int, float]], force: bool, config: Mapping[str, Any]) -> dict[str, Any]:
-    result = _invoke(track.run, detections, output, anchors=anchors, force=force, config=config)
+    result = _invoke(track.run, detections, output, anchors=anchors, force=force, config=config, clip=output / "clip.mp4")
     if isinstance(result, Mapping):
         return dict(result)
     return _load_npz(Path(result) if result is not None else output / "keypoints.npz")
@@ -238,6 +238,8 @@ def _finish_run(
     costs = [float(item["cost"]) for item in api_stats.values() if isinstance(item, Mapping) and item.get("cost") is not None]
     api_stats["total_cost"] = sum(costs) if costs else None
     metadata: dict[str, Any] = {"parameters": vars(arguments), "elapsed_s": time.perf_counter() - started, "stage_times_s": stage_times, "encoding": encoding, "language": transcript.get("language"), "target_anchors": anchors, "duration_s": duration, "occupied_hands": actions_result.get("occupied_hands", {}) if isinstance(actions_result, Mapping) else {}, "api": api_stats}
+    if (output / "track_meta.json").exists():
+        metadata["tracking"] = json.loads((output / "track_meta.json").read_text(encoding="utf-8"))
     metadata["models_used"] = {}
     for stage, prefix in (("judge", "jev"), ("narrate", "narrate")):
         identifiers = set()

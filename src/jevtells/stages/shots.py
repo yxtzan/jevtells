@@ -79,14 +79,8 @@ def _framing_boundaries(states: np.ndarray, minimum: int) -> list[int]:
     return result
 
 
-def run(clip: Path, out: Path, force: bool = False, points: Mapping[str, Any] | None = None, config: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
-    destination, meta_path = out / 'shots.json', out / 'shots_meta.json'
-    settings = dict((config or {}).get('shots', {}))
-    visibility = float((config or {}).get('detection', {}).get('pose_visibility_threshold', .5))
-    signature = {'version': 2, 'settings': settings, 'visibility': visibility}
-    if destination.exists() and meta_path.exists() and not force:
-        if json.loads(meta_path.read_text()).get('signature') == signature:
-            return json.loads(destination.read_text())
+def detect_hard_cuts(clip: Path, settings: Mapping[str, Any]) -> dict[str, Any]:
+    """Shared edit detection; tracking does not depend on selected keypoints."""
     capture = cv2.VideoCapture(str(clip))
     if not capture.isOpened():
         raise RuntimeError(f'cannot decode shots: {clip}')
@@ -107,6 +101,21 @@ def run(clip: Path, out: Path, force: bool = False, points: Mapping[str, Any] | 
             previous = current
     finally:
         capture.release()
+    return {"fps": fps, "total": total, "width": width, "height": height, "cuts": sorted(cuts), "differences": differences}
+
+
+def run(clip: Path, out: Path, force: bool = False, points: Mapping[str, Any] | None = None, config: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
+    destination, meta_path = out / 'shots.json', out / 'shots_meta.json'
+    settings = dict((config or {}).get('shots', {}))
+    visibility = float((config or {}).get('detection', {}).get('pose_visibility_threshold', .5))
+    signature = {'version': 2, 'settings': settings, 'visibility': visibility}
+    if destination.exists() and meta_path.exists() and not force:
+        if json.loads(meta_path.read_text()).get('signature') == signature:
+            return json.loads(destination.read_text())
+    detection = detect_hard_cuts(clip, settings)
+    fps, total = detection['fps'], detection['total']
+    width, height = detection['width'], detection['height']
+    cuts, differences = set(detection['cuts']), detection['differences']
     measured = points or {}
     ratios = shoulder_ratios(measured, width, height, visibility)
     present = np.asarray(measured.get('pose_present', np.isfinite(ratios)), dtype=bool)

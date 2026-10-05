@@ -44,8 +44,10 @@ tracking:
   area_ratio_min: 0.50
   area_ratio_max: 2.00
   appearance_similarity: 0.70
-  appearance_size_ratio_min: 0.50
-  appearance_size_ratio_max: 2.00
+  appearance_margin: 0.10
+  appearance_probe_frames: 10
+  appearance_reference_seconds: 1.0
+  appearance_reference_stride: 3
 
 windows:
   min_seconds: 2.0
