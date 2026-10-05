@@ -87,28 +87,49 @@ def detect_hard_cuts(clip: Path, settings: Mapping[str, Any]) -> dict[str, Any]:
     fps = capture.get(cv2.CAP_PROP_FPS) or 30
     total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
     width, height = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)), int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    cuts, differences, previous = set(), [], None
+    histograms = []
     try:
         for index in range(total):
             ok, frame = capture.read()
             if not ok:
                 raise RuntimeError('shot decoding ended early')
-            current = histogram(frame, settings)
-            difference = max(cv2.compareHist(a, b, cv2.HISTCMP_BHATTACHARYYA) for a, b in zip(previous, current)) if previous is not None else 0.0
-            differences.append(float(difference))
-            if difference > float(settings.get('histogram_threshold', .45)):
-                cuts.add(index)
-            previous = current
+            histograms.append(histogram(frame, settings))
     finally:
         capture.release()
-    return {"fps": fps, "total": total, "width": width, "height": height, "cuts": sorted(cuts), "differences": differences}
+    distance = lambda a, b: max(cv2.compareHist(x, y, cv2.HISTCMP_BHATTACHARYYA) for x, y in zip(a, b))
+    differences = [0.] + [float(distance(a, b)) for a, b in zip(histograms, histograms[1:])]
+    threshold = float(settings.get('histogram_threshold', .45))
+    radius = int(settings.get('persistence_frames', 3))
+    raw = []
+    for index, difference in enumerate(differences):
+        if difference <= threshold or index < radius or index + radius > total:
+            continue
+        before = np.mean(histograms[index-radius:index], axis=0).astype('float32')
+        after = np.mean(histograms[index:index+radius], axis=0).astype('float32')
+        # The last post-cut frames must retain the new appearance. A flash
+        # must not pass merely because it shifts an averaged histogram.
+        if distance(before, after) > threshold and all(distance(before, histograms[i]) > threshold for i in range(index+1,index+radius)):
+            raw.append(index)
+    minimum = max(1, round(float(settings.get('min_seconds', .5)) * fps))
+    kept = [0]
+    for boundary in raw:
+        if boundary - kept[-1] < minimum:
+            if len(kept) > 1:
+                kept.pop()
+            else:
+                continue
+        kept.append(boundary)
+    if total - kept[-1] < minimum and len(kept) > 1:
+        kept.pop()
+    return {"fps": fps, "total": total, "width": width, "height": height, "cuts": kept[1:], "raw_cuts": raw, "differences": differences}
 
 
-def run(clip: Path, out: Path, force: bool = False, points: Mapping[str, Any] | None = None, config: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
+
+def run(clip: Path, out: Path, force: bool = False, points: Mapping[str, Any] | None = None, config: Mapping[str, Any] | None = None, detections: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
     destination, meta_path = out / 'shots.json', out / 'shots_meta.json'
     settings = dict((config or {}).get('shots', {}))
     visibility = float((config or {}).get('detection', {}).get('pose_visibility_threshold', .5))
-    signature = {'version': 2, 'settings': settings, 'visibility': visibility}
+    signature = {'version': 3, 'settings': settings, 'visibility': visibility}
     if destination.exists() and meta_path.exists() and not force:
         if json.loads(meta_path.read_text()).get('signature') == signature:
             return json.loads(destination.read_text())
@@ -137,7 +158,10 @@ def run(clip: Path, out: Path, force: bool = False, points: Mapping[str, Any] | 
         shoulder = float(np.median(finite) * width) if len(finite) else None
         box = target_bounds(measured, start, end, width, height, visibility, shoulder or 0, float(settings.get('target_padding_shoulder', .15)))
         target = bool(box and len(present[start:end]) and present[start:end].mean() >= float(settings.get('target_presence_ratio', .5)) and (box[3] - box[1]) / height >= float(settings.get('min_target_height_ratio', .25)))
-        shots.append({'index': len(shots) + 1, 't0': start / fps, 't1': end / fps, 'cut_at_start': start in cuts, 'label': 'target' if target else 'other', 'target_box': box if target else None, 'target_center_x': (box[0] + box[2]) / 2 if target else None, 'shoulder_px': shoulder if target else None, 'far': bool(shoulder / width < far_threshold) if target and shoulder is not None else None})
+        from .framing import multiple_people
+        people_poses = np.asarray((detections or {}).get('poses_all', []))
+        framing = multiple_people(people_poses[start:end], {**settings, 'visibility': visibility})
+        shots.append({**framing, 'index': len(shots) + 1, 't0': start / fps, 't1': end / fps, 'cut_at_start': start in cuts, 'label': 'target' if target else 'other', 'target_box': box if target else None, 'target_center_x': (box[0] + box[2]) / 2 if target else None, 'shoulder_px': shoulder if target else None, 'far': bool(shoulder / width < far_threshold) if target and shoulder is not None else None})
     destination.write_text(json.dumps(shots, ensure_ascii=False, indent=2, allow_nan=False))
     meta_path.write_text(json.dumps({'signature': signature, 'histogram_cuts': sorted(i / fps for i in cuts), 'differences': differences, 'framing_boundaries': [i / fps for i in kept[1:-1]]}, indent=2))
     return shots
