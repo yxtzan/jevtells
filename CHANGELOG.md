@@ -5,6 +5,43 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-05
+
+### Added
+
+- **Shot detection and per-shot speaker bounds.** Distant shots are recognised. Gestures detected there stay in `actions.json`, but they are not sent to Jev and not drawn.
+- **Automatic label placement, decided once per shot.**
+  - Labels avoid the face, subtitles, blurred areas, the score card and each other.
+  - Leader lines never cross the face or the body's midline.
+  - A shown label always has its leader line and hand dot.
+- **Landscape score card that moves to the empty side at cuts.** It stays on the right unless the left is clearly emptier.
+- **Portrait smart reframe** (`--reframe auto|off`, default `auto`). The portrait video is a full-height 4:3 crop around the speaker. When burned-in subtitles are too wide for the crop, the picture is zoomed and the original subtitle band is shown full-width below it.
+- **`jevtells doctor`** checks Python, ffmpeg encoders, models, fonts and whether the key is set.
+- **`jevtells download`** fetches the models and fonts.
+- **Installable with `pip install .`**, with config, translations and the prompt bundled. Models and fonts are looked up in `$JEVTELLS_HOME`, then the current directory, then `~/.jevtells`.
+- **`--debug-layout`** saves one picture per shot.
+- **New scripts:** `scripts/check_layout.py` (frame-by-frame layout audit), `scripts/batch_eval.py` (multi-clip summary with warnings) and `scripts/make_layout_variants.py` (off-centre, distant and cut test clips).
+
+### Changed
+
+- **`run` renders the videos by default.**
+- **Narration is written for the whole clip in one call**, by Gemini 3.8 Flash with low reasoning.
+  - Lines contain no numbers; changes are described in words.
+  - The quoted phrase must translate part of the subtitle and may not be a label name.
+  - Adjacent lines may not repeat an opening or a highlight.
+  - Failed lines are retried together, and the fallback reads as a plain sentence.
+- **Commentary transitions:** the old line fades out completely before the new one fades in.
+- **Fixed heights:** the narration area keeps one height for the whole clip, and leftover space in the portrait layout is spread evenly.
+- **Footer** shows short model names. Full model IDs are kept in `run_meta.json`.
+- **Rendering cache:** videos are re-rendered automatically when the rendering code changes, and `--from render` always re-renders.
+- **OpenRouter errors:** rate limits, server errors and timeouts are retried with backoff. Error responses are saved without credentials, and requests rejected before reaching a provider are recorded as unbilled.
+
+### Known issues
+
+- Burned-in subtitles follow their own timing, so the narration can run a second or two ahead of the on-screen subtitle.
+- Label positions are fixed per shot, so the leader line gets long when a hand moves far within the shot.
+- Gesture rules and layout have so far been checked on one speaker plus synthetic variants. Validation on new footage comes before v1.0.
+
 ## [0.4.0] - 2026-10-05
 
 ### Added
