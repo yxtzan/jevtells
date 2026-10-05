@@ -133,6 +133,13 @@ def _run_track(detections: dict[str, Any], output: Path, anchors: list[tuple[int
     return _load_npz(Path(result) if result is not None else output / "keypoints.npz")
 
 
+def _analysis_windows_changed(current, previous) -> bool:
+    """Coverage is derived metadata; only semantic window changes invalidate API caches."""
+    def semantic(rows):
+        return [{k:v for k,v in row.items() if k != 'target_presence_ratio'} for row in rows]
+    return previous is None or semantic(current) != semantic(previous)
+
+
 def _run_actions(points: dict[str, Any], windows: list[dict[str, Any]], output: Path, force: bool, config: Mapping[str, Any], clip: Path | None = None) -> dict[str, Any]:
     """Run the optional M2 action stage with either supported call shape."""
 
@@ -398,14 +405,15 @@ def main() -> None:
     stage_start = time.perf_counter()
     previous_windows = json.loads((output / "windows.json").read_text(encoding="utf-8")) if (output / "windows.json").exists() else None
     windows = _invoke(segment.run, transcript, shot_list, output, force_stage("segment"), config=config)
-    from .stages.presence import split_presence_changes
+    from .stages.presence import split_presence_changes, mark_presence
     marked = split_presence_changes(windows, shot_list, points, transcript, config)
     from .stages.speakers import split_speaker_changes
     marked = split_speaker_changes(marked, intervals, transcript, config)
     marked = mark_windows(marked, intervals, float(config.get("other_speaker_overlap", 0.5)))
     presence_edges = [float(b['t0']) for a,b in zip(shot_list,shot_list[1:]) if (a.get('label') == 'target') != (b.get('label') == 'target')]
     marked = segment.merge_short_windows(marked, config, boundaries=[*[t for interval in intervals for t in interval],*presence_edges])
-    others_changed = marked != previous_windows
+    marked = mark_presence(marked, points)
+    others_changed = _analysis_windows_changed(marked, previous_windows)
     if marked != windows:
         windows = marked
         (output / "windows.json").write_text(json.dumps(windows, ensure_ascii=False, indent=2), encoding="utf-8")

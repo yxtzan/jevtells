@@ -152,3 +152,13 @@ def test_merge_cannot_cross_speaker_gap_without_caption():
     from jevtells.stages.segment import merge_short_windows
     rows = [{'t0':0,'t1':.5,'subtitle':'前'}, {'t0':1.5,'t1':3.5,'subtitle':'后'}]
     assert len(merge_short_windows(rows,{},boundaries=[.7,1.2])) == 2
+
+
+def test_presence_metadata_drift_does_not_invalidate_paid_analysis():
+    from jevtells.cli import _analysis_windows_changed
+    old = [{'id':'W00','t0':0,'t1':3,'subtitle':'原话','speaker_other':False,'target_offscreen':False,'target_presence_ratio':.999999999999998}]
+    changed = [{**old[0],'target_presence_ratio':1.0}]
+    assert not _analysis_windows_changed(changed,old)
+    changed[0]['target_offscreen'] = True
+    assert _analysis_windows_changed(changed,old)
+    assert _analysis_windows_changed(old,None)
