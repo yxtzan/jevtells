@@ -23,7 +23,7 @@ from ..stages.prepare import _ffmpeg
 from ..stages.framing import faces_at
 from ..stages.certainty import uncertain
 from ..stages.narrate_facts import score_value
-from .animation import commentary_at, ease_in_out_cubic, progress, window_at, panel_index, panel_window_at
+from .animation import commentary_layers, ease_in_out_cubic, progress, window_at, panel_index, panel_window_at
 from .geometry import Layout
 from .labels import schedule
 from .panels import Panels, opacity
@@ -502,12 +502,15 @@ class Composer:
             else:
                 image.alpha_composite(analysis)
             animation = self.settings["animation"]
-            sentence, amount, offset = commentary_at(index, elapsed, animation)
-            sentence = panel_index(self.windows,sentence)
-            image.alpha_composite(opacity(self.panels.quote(sentence), amount * attenuation))
-            layer, position = self.panels.commentary(sentence)
-            position = (position[0], position[1] + self.layout.px(offset))
-            image.alpha_composite(opacity(layer, amount * attenuation), position)
+            layers = commentary_layers(self.windows,index,elapsed,animation)
+            for sentence, amount, offset in layers:
+                if amount <= 0 and len(layers) > 1:
+                    continue
+                image.alpha_composite(opacity(self.panels.quote(sentence), amount * attenuation))
+                layer, position = self.panels.commentary(sentence)
+                position = (position[0], position[1] + self.layout.px(offset))
+                image.alpha_composite(opacity(layer, amount * attenuation), position)
+
         else:
             layer, position = self.panels.commentary(None)
             image.alpha_composite(layer, position)

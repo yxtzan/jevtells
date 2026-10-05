@@ -173,3 +173,14 @@ def test_zoom_transition_continues_from_previous_pan_position():
     assert plan['shots'][0]['pans']
     before = crop_at({'enabled':True,'shots':[plan['shots'][0]]},2)
     assert crop_at(plan,2) == before
+
+
+def test_after_interjection_commentary_has_no_blackout_frame():
+    from jevtells.render.animation import commentary_layers
+    windows = [{'t0':0,'t1':3},{'t0':3,'t1':3.4,'hold_previous_panel':True},{'t0':3.4,'t1':6}]
+    settings = {'commentary_in_seconds':.25,'commentary_out_seconds':.15,'commentary_offset':12}
+    for elapsed in np.arange(0,.4,1/30):
+        layers = commentary_layers(windows,2,elapsed,settings)
+        assert all(index in {0,2} for index,_,_ in layers)
+        assert abs(sum(amount for _,amount,_ in layers)-1) < 1e-9
+    assert commentary_layers(windows,2,0,settings)[0] == (0,1,0)
