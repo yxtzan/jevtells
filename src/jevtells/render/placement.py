@@ -16,7 +16,7 @@ def card_side(target: Sequence[float] | None, width: float, card_width: float, m
         return "right"
     if left >= card_width+margin:
         return "left"
-    return "right" if right >= left else "left"
+    return "left" if left >= 1.5 * right else "right"
 
 
 def crosses(a: Sequence[float], b: Sequence[float], c: Sequence[float], d: Sequence[float]) -> bool:
