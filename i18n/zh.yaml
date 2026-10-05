@@ -85,4 +85,4 @@ narration:
   rising: 持续走高
   falling: 持续走低
   transition: 转为{label}
-  fallback: '{intent}，语气{emotion}'
+  fallback: '语气{emotion}，表达{intent}'

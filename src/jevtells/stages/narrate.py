@@ -7,10 +7,10 @@ import re
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from ..clients.openrouter import OpenRouterClient
+from ..clients.openrouter import OpenRouterClient, OpenRouterError
 from ..schemas import Narration
 from . import narrate_facts
-from .narrate_validation import RED_FLAGS as _RED_FLAGS, quote_tokens, validation_errors
+from .narrate_validation import RED_FLAGS as _RED_FLAGS, quote_tokens, validation_errors, repeated_highlights
 from ..resources import data_path
 
 
@@ -96,19 +96,28 @@ def run(states: Mapping[str, Any] | None, judgments: Mapping[str, Any] | None, o
     if destination.exists() and not force:
         meta_path = out / "narrate_meta.json"
         meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
-        if meta.get("lang") == lang and meta.get("facts_version") == 3:
+        if meta.get("lang") == lang and meta.get("facts_version") == 4:
             return json.loads(destination.read_text(encoding="utf-8"))
     if states is None:
         states = json.loads((out / "states.json").read_text(encoding="utf-8"))
     if judgments is None:
         judgments = json.loads((out / "judgments.json").read_text(encoding="utf-8"))
     settings = (config or {}).get("narrate", {})
-    model = str(settings.get("model", "google/gemini-3.1-flash-lite"))
+    model = str(settings.get("model", "google/gemini-3.8-flash"))
     retries = min(2, max(0, int(settings.get("validation_retries", 2))))
     template = data_path("config/narrate_prompt.md").read_text(encoding="utf-8")
     facts_by_id = narrate_facts.run(states, judgments, out, config)
     active = {key: {**facts, "id": key, "verbal_highlights": narrate_facts.verbal_highlights(facts.get("highlights", []), lang)} for key, facts in facts_by_id.items() if not facts["speaker_other"]}
     active_client = client or OpenRouterClient()
+    request_records = []
+    if isinstance(active_client, OpenRouterClient):
+        active_client.audit_dir = out / "raw"
+        observer = getattr(active_client, "on_response", None)
+        def account(event):
+            request_records.append({key: value for key, value in event.items() if key != "body"})
+            if observer:
+                observer(event)
+        active_client.on_response = account
     raw_dir = out / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
     for path in raw_dir.glob("narrate_*.json"):
@@ -119,8 +128,13 @@ def run(states: Mapping[str, Any] | None, judgments: Mapping[str, Any] | None, o
     pending = list(active)
     failures = {}
     def save():
+        if request_records:
+            stats["http_calls"] = len(request_records)
+            stats["request_records"] = request_records
+            stats["cost"] = None if any(r["cost"] is None for r in request_records) else sum(r["cost"] for r in request_records)
+            stats["known_cost"] = sum(r["cost"] or 0 for r in request_records)
         destination.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
-        (out / "narrate_meta.json").write_text(json.dumps({**stats, "model": model, "lang": lang, "facts_version": 3}, ensure_ascii=False, indent=2), encoding="utf-8")
+        (out / "narrate_meta.json").write_text(json.dumps({**stats, "model": model, "lang": lang, "facts_version": 4}, ensure_ascii=False, indent=2), encoding="utf-8")
     for attempt in range(retries + 1):
         if not pending:
             break
@@ -136,13 +150,22 @@ def run(states: Mapping[str, Any] | None, judgments: Mapping[str, Any] | None, o
             usage = response.get("usage") or {}
             stats["prompt_tokens"] += int(usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0)
             stats["completion_tokens"] += int(usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0)
-            stats["cost"] += float(response.get("cost") or 0)
-            candidates = _parse_batch(_content(raw))
+            cost = response.get("cost")
+            stats.setdefault("costs", []).append({"cost": cost, "reason": None if cost is not None else "response has no usage.cost"})
+            stats["cost"] = None if stats["cost"] is None or cost is None else stats["cost"] + float(cost)
+            if any(choice.get("finish_reason") == "length" for choice in raw.get("choices", [])):
+                stats["truncated_responses"] = stats.get("truncated_responses", 0) + 1
+                candidates = {}
+            else:
+                candidates = _parse_batch(_content(raw))
         except Exception as error:
             stats["failed"] += 1
             stats["error"] = type(error).__name__
             save()
-            if (config or {}).get("stop_on_api_error", False):
+            stats["cost"] = None
+            stats.setdefault("costs", []).append({"cost": None, "reason": "API failed; see raw error records"})
+            save()
+            if (config or {}).get("stop_on_api_error", False) or isinstance(error, OpenRouterError):
                 raise
             break
         failures = {}
@@ -159,6 +182,8 @@ def run(states: Mapping[str, Any] | None, judgments: Mapping[str, Any] | None, o
             future = [fixed[k]["line"] for k in ordered[index+1:] if k in fixed]
             if any(line[:4] == old[:4] for old in future):
                 errors.append("first four characters conflict with a fixed later line")
+            if future and repeated_highlights(line, future[0]):
+                errors.append("highlight claim repeats the adjacent fixed later line")
             if lang == "zh":
                 if sum(old[:2] == line[:2] for old in previous+future) >= 2:
                     errors.append("first two characters conflict with fixed lines")
@@ -179,6 +204,8 @@ def run(states: Mapping[str, Any] | None, judgments: Mapping[str, Any] | None, o
     previous = []
     for key, facts in active.items():
         parsed = accepted.get(key)
+        if parsed is not None and validation_errors(parsed, facts, previous, str(states[key].get("speaker", "")), lang):
+            parsed = None
         if parsed is None:
             try:
                 parsed = _fallback(facts, lang, previous)

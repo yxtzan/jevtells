@@ -74,7 +74,7 @@ def test_retryable_responses_retry_three_times(status):
         client.decide({}, [], "model")
     assert raised.value.status == status
     assert len(calls) == 4  # initial attempt plus three retries
-    assert sleeps == [0.5, 1.0, 2.0]
+    assert sleeps == [2, 4, 8]
 
 
 def test_bad_request_does_not_retry_and_redacts_key():

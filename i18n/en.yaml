@@ -85,4 +85,4 @@ narration:
   rising: continues rising
   falling: continues falling
   transition: shifts to {label}
-  fallback: '{intent}, with a {emotion} tone'
+  fallback: 'With a {emotion} tone, {intent}'

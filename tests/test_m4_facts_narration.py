@@ -87,7 +87,7 @@ def test_facts_indices_are_one_based_and_other_highlights_are_empty():
     ("紧张度全场最低", "hello world", [], [], "zh", "absent"),
     ("专注度持续走高", "hello world", [], [], "zh", "absent"),
     ("紧张度回落", "hello world", [], [], "zh", "absent"),
-    ("意图转为「强调重点」", "hello world", [], [], "zh", "absent"),
+    ("意图转为强调重点", "hello world", [], [], "zh", "absent"),
     ("专注度全场最高", "hello world", [], ["紧张度 0.9，全场最高"], "zh", "absent"),
     ("左手下压讲述内容", "hello world", ["左手下压回应问题"], [], "zh", "repeat"),
     ("继续表达", "different words", [], [], "zh", "substring"),
@@ -103,7 +103,7 @@ def test_each_commentary_validation_rule(line, quote, previous, highlights, lang
 
 def test_grounded_superlative_and_transition_pass():
     facts = {"subtitle": "hello world", "highlights": ["自信度 0.92，全场最高", "意图由「解释说明」转为「强调重点」"]}
-    for line in ("双手下压，自信度升至全场最高", "意图转为「强调重点」", "意图转为强调重点"):
+    for line in ("双手下压，自信度升至全场最高", "意图转为强调重点"):
         assert validation_errors({"line": line, "quote": "hello world"}, facts, [], "黄仁勋", "zh") == []
 
 

@@ -16,6 +16,39 @@ def quote_tokens(text: str) -> list[str]:
     return re.findall(r"[a-zA-Z0-9]+(?:['’\-][a-zA-Z0-9]+)*|[\u3400-\u9fff]", text)
 
 
+def display_names() -> set[str]:
+    names = set()
+    for language in ("zh", "en"):
+        tr = load_translations(language)
+        for category in ("intents", "emotions", "scores"):
+            names.update(str(value).casefold() for value in tr[category].values())
+        names.update(str(value).casefold() for value in tr["facts"]["scores"].values())
+    return names | {"意图转变", "情绪转变", "指标变化", "数据变化", "intent transition", "emotion transition", "metric change"}
+
+
+def highlight_claims(line: str) -> set[str]:
+    """Normalize metric trends/extremes and label transitions for adjacency."""
+    claims = set()
+    zh, en = load_translations("zh"), load_translations("en")
+    for language, tr in (("zh", zh), ("en", en)):
+        for name in tr["facts"]["scores"].values():
+            prefix = re.escape(name) + (r"\s*" if language == "en" else "")
+            for match in re.finditer(prefix + r"(?:与(?:自信度|专注度|紧张度))?(?:降至|升至|达到|为|处于)?(?:全场)?(?:最高|最低|持续走高|持续走低|明显上升|明显下降|有所上升|有所下降|continues rising|continues falling|reaches the highest level|reaches the lowest level|rises markedly|falls markedly|rises somewhat|falls somewhat)", line, re.I):
+                wording = match[0]
+                trend = next((term for term in ("最高", "最低", "持续走高", "持续走低", "明显上升", "明显下降", "有所上升", "有所下降") if term in wording), wording.casefold())
+                claims.add(name.casefold() + ":" + trend)
+        for category, group in (("意图", "intents"), ("情绪", "emotions")):
+            for label in tr[group].values():
+                pattern = re.escape(category) + r"转为\s*" + re.escape(label) if language == "zh" else r"(?:shifts|turns) to\s+" + re.escape(label)
+                if re.search(pattern, line, re.I):
+                    claims.add(category + ":" + label.casefold())
+    return claims
+
+
+def repeated_highlights(line: str, previous: str) -> bool:
+    return bool(highlight_claims(line) & highlight_claims(previous))
+
+
 def validation_errors(parsed: Mapping[str, Any], facts: Mapping[str, Any], previous: Sequence[str], speaker: str, lang: str, *, allow_repeated_opening: bool = False) -> list[str]:
     line, quote = str(parsed.get("line", "")).strip(), str(parsed.get("quote", "")).strip()
     errors: list[str] = []
@@ -38,6 +71,18 @@ def validation_errors(parsed: Mapping[str, Any], facts: Mapping[str, Any], previ
         errors.append("line starts with the name, a pronoun or a scene description")
     if line.count("「") > 1 or line.count("」") > 1 or line.count("「") != line.count("」"):
         errors.append("line must contain at most one matched pair of 「」")
+    names = display_names()
+    for phrase in re.findall(r"「([^」]*)」", line):
+        if phrase.strip().casefold() in names:
+            errors.append("corner quote contains a display label or summary term; use a translated subtitle phrase")
+        if lang == "zh" and (not re.search(r"[\u3400-\u9fff]", phrase) or re.search(r"[A-Za-z]", phrase)):
+            errors.append("corner quote must be a Chinese translation of the current subtitle phrase")
+    if any(line.casefold().startswith(name) for name in names if name in {
+            value.casefold() for language in ("zh", "en") for group in ("intents", "emotions")
+            for value in load_translations(language)[group].values()}):
+        errors.append("line starts with an intent or emotion display label")
+    if previous and repeated_highlights(line, previous[-1]):
+        errors.append("highlight claim repeats the adjacent previous line")
     highlights = [str(value).replace(" ", "") for value in facts.get("highlights", [])]
     compact = line.replace(" ", "")
     for match in re.finditer(r"最高|最低|持续|回落|转为", compact):
