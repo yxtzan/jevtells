@@ -42,3 +42,22 @@ def faces_at(poses: np.ndarray, size: tuple[int, int], visibility: float, *, raw
         if face:
             result.append(list(face))
     return result
+
+
+def multi_timeline(poses: np.ndarray, fps: float, cuts: list[int], settings: Mapping[str, Any]) -> np.ndarray:
+    """Smooth counts within edits; accept only sustained changes, at their onset."""
+    from scipy.ndimage import median_filter
+    from .shots import _framing_boundaries
+    counts = people_counts(poses, settings)
+    result = np.zeros(len(counts), dtype=bool)
+    radius = max(1, round(float(settings.get('multi_smooth_seconds', .2))*fps))
+    kernel = radius if radius % 2 else radius+1
+    minimum = max(1, round(float(settings.get('multi_switch_seconds', 1.5))*fps))
+    for a,b in zip([0,*cuts],[*cuts,len(counts)]):
+        states = median_filter(counts[a:b], size=kernel, mode='nearest') >= 2
+        if not len(states):
+            continue
+        boundaries = [0,*_framing_boundaries(states,minimum),len(states)]
+        for lo,hi in zip(boundaries,boundaries[1:]):
+            result[a+lo:a+hi] = states[lo]
+    return result

@@ -204,9 +204,13 @@ class Composer:
     def video_layout(self, seconds: float) -> Layout:
         shot = next((s for s in self.shots if float(s["t0"]) <= seconds < float(s["t1"])), self.shots[-1])
         planned = next((s for s in self.reframe_plan.get("shots",[]) if float(s["t0"])<=seconds<float(s["t1"])),shot)
-        if planned.get("multi_person"):
+        crop = crop_at(self.reframe_plan, seconds)
+        if crop is None or abs(crop[2]-self.base_layout.source[0]) < 1e-6:
             return Layout.create(self.base_layout.kind, self.settings, self.base_layout.source)
-        return Layout.create(self.base_layout.kind, self.settings, self.base_layout.source, crop_at(self.reframe_plan, seconds), strip_y=self.reframe_plan.get("strip_y") if self.reframe_plan.get("mode")=="strip" else None)
+        strip = self.reframe_plan.get('mode') == 'strip'
+        amount = (self.base_layout.source[0]-crop[2])/(self.base_layout.source[0]-self.base_layout.source[1]*4/3)
+        return Layout.create(self.base_layout.kind, self.settings, self.base_layout.source, crop,
+                             strip_y=crop[3] if strip else None, strip_gap=8*amount)
 
     def card_state(self, seconds: float) -> tuple[str, tuple[float, float, float, float]]:
         shot = next((s for s in self.shots if float(s["t0"]) <= seconds < float(s["t1"])), self.shots[-1])
@@ -613,6 +617,9 @@ def run(clip: Path, out: Path, windows: Sequence[Mapping[str, Any]], points: Map
                         for shot in plan["shots"]:
                             if not shot.get("multi_person"):
                                 shot["height"]=mode["strip_y"]
+                        for previous, shot in zip(plan['shots'],plan['shots'][1:]):
+                            if shot.get('transition'):
+                                shot['transition']['height'] = previous['height']
             (out / f"reframe_{kind}.json").write_text(json.dumps(plan,indent=2))
             geometry = Layout.create(kind, effective, source_size or frame_size,crop_at(plan,0),strip_y=plan.get("strip_y") if plan.get("mode")=="strip" else None)
             painter = Composer(effective, geometry, windows, points, events, judgments, narration, transcript, title=title, sources=_sources(out, settings, config, lang), lang=lang, blur=blur, subtitles=subtitles, config=config, shots=shot_list,reframe_plan=plan)

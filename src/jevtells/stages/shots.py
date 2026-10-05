@@ -129,7 +129,7 @@ def run(clip: Path, out: Path, force: bool = False, points: Mapping[str, Any] | 
     destination, meta_path = out / 'shots.json', out / 'shots_meta.json'
     settings = dict((config or {}).get('shots', {}))
     visibility = float((config or {}).get('detection', {}).get('pose_visibility_threshold', .5))
-    signature = {'version': 3, 'settings': settings, 'visibility': visibility}
+    signature = {'version': 4, 'settings': settings, 'visibility': visibility}
     if destination.exists() and meta_path.exists() and not force:
         if json.loads(meta_path.read_text()).get('signature') == signature:
             return json.loads(destination.read_text())
@@ -143,10 +143,14 @@ def run(clip: Path, out: Path, force: bool = False, points: Mapping[str, Any] | 
     minimum = max(1, round(float(settings.get('min_seconds', .5)) * fps))
     far_threshold = float(settings.get('far_shoulder_ratio', .15))
     states = np.where(present, np.where(ratios < far_threshold, 1, 0), -1) if len(ratios) else np.array([])
-    boundaries = sorted(cuts | set(_framing_boundaries(states, minimum)))
+    from .framing import multi_timeline
+    people_poses = np.asarray((detections or {}).get('poses_all', []))
+    multi = multi_timeline(people_poses, fps, sorted(cuts), {**settings, 'visibility': visibility})
+    multi_edges = set((np.flatnonzero(multi[1:] != multi[:-1])+1).tolist())
+    boundaries = sorted(cuts | multi_edges | set(_framing_boundaries(states, minimum)))
     kept = [0]
     for boundary in boundaries:
-        if boundary - kept[-1] >= minimum:
+        if boundary > kept[-1]:
             kept.append(boundary)
     if total - kept[-1] < minimum and len(kept) > 1:
         kept.pop()
@@ -161,6 +165,7 @@ def run(clip: Path, out: Path, force: bool = False, points: Mapping[str, Any] | 
         from .framing import multiple_people
         people_poses = np.asarray((detections or {}).get('poses_all', []))
         framing = multiple_people(people_poses[start:end], {**settings, 'visibility': visibility})
+        framing['multi_person'] = bool(multi[start]) if len(multi) > start else False
         shots.append({**framing, 'index': len(shots) + 1, 't0': start / fps, 't1': end / fps, 'cut_at_start': start in cuts, 'label': 'target' if target else 'other', 'target_box': box if target else None, 'target_center_x': (box[0] + box[2]) / 2 if target else None, 'shoulder_px': shoulder if target else None, 'far': bool(shoulder / width < far_threshold) if target and shoulder is not None else None})
     destination.write_text(json.dumps(shots, ensure_ascii=False, indent=2, allow_nan=False))
     meta_path.write_text(json.dumps({'signature': signature, 'histogram_cuts': sorted(i / fps for i in cuts), 'differences': differences, 'framing_boundaries': [i / fps for i in kept[1:-1]]}, indent=2))

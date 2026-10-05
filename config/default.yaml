@@ -123,6 +123,8 @@ shots:
   person_edge_margin: 0.02
   multi_height_ratio: 0.35
   multi_frame_ratio: 0.50
+  multi_smooth_seconds: 0.20
+  multi_switch_seconds: 1.50
 
 colour:
   target: '#00E5FF'
@@ -161,6 +163,7 @@ render:
     pan_exit_ratio: 0.10
     pan_wait_seconds: 1
     pan_seconds: 0.60
+    zoom_seconds: 0.60
     visibility: 0.50
   reframe_components:
     line_height: 1.30
