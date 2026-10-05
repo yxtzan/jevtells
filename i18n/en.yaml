@@ -42,6 +42,7 @@ ui:
   brand: JevTells · Body language
   title: 'AI reads {speaker}'
   waiting: Waiting for the first sentence…
+  target_offscreen: (Target offscreen; no judgment)
   other_speaker: (Another speaker; no judgment)
   other_legend: other speaker
   locked: target locked

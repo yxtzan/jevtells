@@ -110,7 +110,7 @@ def run(states: Mapping[str, Any] | None, judgments: Mapping[str, Any] | None, o
     retries = min(2, max(0, int(settings.get("validation_retries", 2))))
     template = data_path("config/narrate_prompt.md").read_text(encoding="utf-8")
     facts_by_id = narrate_facts.run(states, judgments, out, config)
-    active = {key: {**facts, "id": key, "verbal_highlights": narrate_facts.verbal_highlights(facts.get("highlights", []), lang)} for key, facts in facts_by_id.items() if not facts["speaker_other"]}
+    active = {key: {**facts, "id": key, "verbal_highlights": narrate_facts.verbal_highlights(facts.get("highlights", []), lang)} for key, facts in facts_by_id.items() if not facts["speaker_other"] and not facts.get("target_offscreen")}
     active_client = client or OpenRouterClient()
     request_records = []
     if isinstance(active_client, OpenRouterClient):
@@ -125,7 +125,7 @@ def run(states: Mapping[str, Any] | None, judgments: Mapping[str, Any] | None, o
     raw_dir.mkdir(parents=True, exist_ok=True)
     generation = time.time_ns()
     results = {key: None for key in facts_by_id}
-    stats = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "reasoning_tokens": 0, "response_records": [], "cost": 0.0, "failed": 0, "retries": 0, "fallbacks": 0, "windows": {key: {"retries": 0, "fallback": False, "failures": []} for key in active}, "skipped": {key: "speaker_other" for key in facts_by_id if key not in active}}
+    stats = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "reasoning_tokens": 0, "response_records": [], "cost": 0.0, "failed": 0, "retries": 0, "fallbacks": 0, "windows": {key: {"retries": 0, "fallback": False, "failures": []} for key in active}, "skipped": {key: "speaker_other" if facts["speaker_other"] else "target_offscreen" for key, facts in facts_by_id.items() if key not in active}}
     accepted = {}
     pending = list(active)
     failures = {}

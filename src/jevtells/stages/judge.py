@@ -11,7 +11,7 @@ import yaml
 from ..clients.openrouter import OpenRouterClient
 from ..schemas import Judgment
 from .state import action_text
-from .speakers import other_ids
+from .presence import skip_reasons
 from ..resources import data_path
 
 
@@ -180,7 +180,7 @@ def run(states: Mapping[str, Any] | None, out: Path, force: bool = False, config
     if states is None:
         states = json.loads((out / "states.json").read_text(encoding="utf-8"))
     windows_path = out / "windows.json"
-    skipped = other_ids(json.loads(windows_path.read_text(encoding="utf-8"))) if windows_path.exists() else set()
+    skipped = skip_reasons(json.loads(windows_path.read_text(encoding="utf-8"))) if windows_path.exists() else {}
     base = load_questions()
     model = str((config or {}).get("jev", {}).get("model", "typesafe/jev-1.13"))
     active_client = client or OpenRouterClient()
@@ -222,7 +222,7 @@ def run(states: Mapping[str, Any] | None, out: Path, force: bool = False, config
         if value is not None:
             Judgment.model_validate(value)
     destination.write_text(json.dumps(judgments, ensure_ascii=False, indent=2), encoding="utf-8")
-    aggregate.update({"model": model, "skipped": {identifier: "speaker_other: window overlaps other speech >= configured threshold" for identifier in sorted(skipped)}})
+    aggregate.update({"model": model, "skipped": dict(sorted(skipped.items()))})
     (out / "judge_meta.json").write_text(json.dumps(aggregate, ensure_ascii=False, indent=2), encoding="utf-8")
     judgments["_meta"] = aggregate
     return judgments

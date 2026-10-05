@@ -90,7 +90,7 @@ def compute_highlights(judgments: Mapping[str, Any], windows: Sequence[Mapping[s
     extrema: dict[str, tuple[float, float] | None] = {}
     means: dict[str, float] = {}
     for key in SCORE_IDS:
-        values = [score_value(judgments.get(str(w["id"])), key) for w in windows if not w.get("speaker_other")]
+        values = [score_value(judgments.get(str(w["id"])), key) for w in windows if not w.get("speaker_other") and not w.get("target_offscreen")]
         values = [value for value in values if value is not None]
         extrema[key] = (min(values), max(values)) if len(values) >= min_extrema_windows else None
         means[key] = sum(values) / len(values) if values else 0.0
@@ -100,7 +100,7 @@ def compute_highlights(judgments: Mapping[str, Any], windows: Sequence[Mapping[s
     for window in windows:
         identifier = str(window["id"])
         judgment = judgments.get(identifier)
-        if window.get("speaker_other") or not isinstance(judgment, Mapping):
+        if window.get("speaker_other") or window.get("target_offscreen") or not isinstance(judgment, Mapping):
             history.clear()
             previous = None
             continue
@@ -197,9 +197,10 @@ def build_facts(states: Mapping[str, Any], judgments: Mapping[str, Any], windows
             "judgments": {"scores": {tr["facts"]["scores"][key]: score_value(judgment, key) for key in SCORE_IDS}, **choices},
             "highlights": highlights[identifier],
             "speaker_other": bool(window.get("speaker_other")),
+            "target_offscreen": bool(window.get("target_offscreen")),
             "opening_style": ("动作开头 / movement", "引语开头 / quotation", "数据变化开头 / measured change", "声音开头 / voice")[opening_index % 4],
         }
-        if not window.get("speaker_other"):
+        if not window.get("speaker_other") and not window.get("target_offscreen"):
             opening_index += 1
     return result
 

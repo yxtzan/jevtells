@@ -17,6 +17,8 @@ class Window(BaseModel):
     shot: str = "target"
     kind: str = "speech"
     speaker_other: bool = False
+    target_offscreen: bool = False
+    target_presence_ratio: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
 class State(BaseModel):

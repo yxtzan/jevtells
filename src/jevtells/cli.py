@@ -375,10 +375,13 @@ def main() -> None:
     if arguments.until == "shots":
         return
     stage_start = time.perf_counter()
+    previous_windows = json.loads((output / "windows.json").read_text(encoding="utf-8")) if (output / "windows.json").exists() else None
     windows = _invoke(segment.run, transcript, shot_list, output, force_stage("segment"), config=config)
-    marked = mark_windows(windows, intervals, float(config.get("other_speaker_overlap", 0.5)))
-    others_changed = marked != windows
-    if others_changed:
+    from .stages.presence import split_presence_changes
+    marked = split_presence_changes(windows, shot_list, points, transcript)
+    marked = mark_windows(marked, intervals, float(config.get("other_speaker_overlap", 0.5)))
+    others_changed = marked != previous_windows
+    if marked != windows:
         windows = marked
         (output / "windows.json").write_text(json.dumps(windows, ensure_ascii=False, indent=2), encoding="utf-8")
     stage_times["segment"] = time.perf_counter() - stage_start

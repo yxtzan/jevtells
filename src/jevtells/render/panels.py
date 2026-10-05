@@ -102,7 +102,7 @@ class Panels:
             return layer, self.layout.point(x, y)
         window = self.windows[index]
         value = self.narration.get(str(window["id"])) or {}
-        line = self.tr["ui"]["other_speaker"] if window.get("speaker_other") else value.get("line", self.tr["ui"]["missing"])
+        line = self.tr["ui"]["other_speaker"] if window.get("speaker_other") else self.tr["ui"]["target_offscreen"] if window.get("target_offscreen") else value.get("line", self.tr["ui"]["missing"])
         number = f"W{index + 1:02d}"
         tag_font = self.fonts.font("mono", self.p["index_size"])
         pad_x, pad_y = self.g["tag_padding"]
@@ -120,7 +120,7 @@ class Panels:
         tag_y = py + self.p["index_top"]
         draw.rectangle(self.layout.rect((px, tag_y, tag_w, self.p["index_size"] * self.g["line_height"] + 2 * pad_y)), fill=self.c["lime"])
         draw.text(self.layout.point(px + pad_x, tag_y + pad_y), number, font=tag_font, fill=self.c["ink"], anchor="lt")
-        draw_fitted(layer, self.layout.point(offset, py), fitted, self.c, line_height=self.g["line_height"], highlight_padding=self.s(self.g["highlight_padding"]), fill=self.c["muted"] if window.get("speaker_other") else self.c["fg"])
+        draw_fitted(layer, self.layout.point(offset, py), fitted, self.c, line_height=self.g["line_height"], highlight_padding=self.s(self.g["highlight_padding"]), fill=self.c["muted"] if window.get("speaker_other") or window.get("target_offscreen") else self.c["fg"])
         return layer, self.layout.point(x, y)
 
     @lru_cache(maxsize=32)
@@ -128,7 +128,7 @@ class Panels:
         image = self.canvas()
         window = self.windows[index]
         value = self.narration.get(str(window["id"])) or {}
-        if window.get("speaker_other") or not value.get("quote"):
+        if window.get("speaker_other") or window.get("target_offscreen") or not value.get("quote"):
             return image
         x, _y, width, _height = self.p["commentary"]
         y, size = self.p["quote_y"], self.p["quote_size"]
@@ -247,7 +247,7 @@ class Panels:
             judgment = self.judgments.get(str(window["id"])) or {}
             emotion = (judgment.get("emotion") or {}).get("label")
             color = self.c["emotions"].get(emotion)
-            if color and not window.get("speaker_other"):
+            if color and not (window.get("speaker_other") or window.get("target_offscreen")):
                 draw.rectangle(rect, fill=color)
                 if emotion not in seen:
                     seen.append(emotion)

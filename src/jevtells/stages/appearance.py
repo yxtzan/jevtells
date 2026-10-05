@@ -52,9 +52,10 @@ def read_appearances(clip: Path, poses: np.ndarray, visibility: float) -> np.nda
 
 
 def similarity(descriptor: np.ndarray, references: Sequence[np.ndarray]) -> float:
+    """Bhattacharyya coefficient (histogram overlap), averaged across regions."""
     if not np.isfinite(descriptor).all():
         return 0.0
-    return max((float(np.mean([1 - cv2.compareHist(a.astype(np.float32), b.astype(np.float32), cv2.HISTCMP_BHATTACHARYYA) for a, b in zip(descriptor, ref)])) for ref in references), default=0.0)
+    return max((float(np.mean([1 - cv2.compareHist(a.astype(np.float32), b.astype(np.float32), cv2.HISTCMP_BHATTACHARYYA) ** 2 for a, b in zip(descriptor, ref)])) for ref in references), default=0.0)
 
 
 def recognize(poses: np.ndarray, descriptors: np.ndarray, start: int, end: int, references: Sequence[np.ndarray], width: float, height: float, rules: Any, settings: Mapping[str, Any]) -> tuple[dict[int, int], dict[str, Any]]:
