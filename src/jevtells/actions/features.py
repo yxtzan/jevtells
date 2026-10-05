@@ -181,6 +181,19 @@ def _rolling_ratio(mask: np.ndarray, fps: float, window_seconds: float) -> np.nd
 
 def extract_features(points: Mapping[str, Any], config: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Extract smoothed, shoulder-normalised frame features from keypoints."""
+    total = len(np.asarray(points.get('pose', [])))
+    cuts = sorted({int(i) for i in points.get('cut_frames', []) if 0 < int(i) < total})
+    if cuts:
+        chunks = []
+        for a,b in zip([0,*cuts],[*cuts,total]):
+            sliced = {k:(np.asarray(v)[a:b] if isinstance(v,np.ndarray) and v.ndim and len(v)==total else v) for k,v in points.items() if k!='cut_frames'}
+            chunks.append(extract_features(sliced,config))
+        result = {}
+        for key in chunks[0]:
+            values = [chunk[key] for chunk in chunks]
+            result[key] = np.concatenate(values) if isinstance(values[0],np.ndarray) and values[0].ndim else values[0]
+        result['cut_frames'] = cuts
+        return result
     pose = np.asarray(points.get("pose"), dtype=float)
     hands = np.asarray(points.get("hands"), dtype=float)
     times = np.asarray(points.get("t", np.arange(len(pose)) / float(points.get("fps", 30.0))), dtype=float)
@@ -225,6 +238,7 @@ def extract_features(points: Mapping[str, Any], config: Mapping[str, Any] | None
         hands_px[..., 2] *= width
     else:
         hands_px = np.full((len(pose), 2, 21, 3), np.nan)
+    pinch_ratio = np.full((len(pose), 2), np.nan)
     open_score = np.full((len(pose), 2), np.nan)
     finger_straight = np.full((len(pose), 2, 5), np.nan)
     palm_orientation = np.full((len(pose), 2), np.nan)
@@ -250,6 +264,10 @@ def extract_features(points: Mapping[str, Any], config: Mapping[str, Any] | None
                 tip_wrist,
                 root_wrist,
             ) = _finger_features(hand_geometry, side=side)
+            if np.isfinite(hand_geometry[[0,4,8,9],:2]).all():
+                palm_size = np.linalg.norm(hand_geometry[9,:2]-hand_geometry[0,:2])
+                if palm_size>0:
+                    pinch_ratio[frame,side] = np.linalg.norm(hand_geometry[4,:2]-hand_geometry[8,:2])/palm_size
             open_score[frame, side] = opened
             finger_straight[frame, side] = straight
             palm_orientation[frame, side] = palm
@@ -299,6 +317,7 @@ def extract_features(points: Mapping[str, Any], config: Mapping[str, Any] | None
         "wrist_velocity_px_s": wrist_velocity,
         "wrist_norm": wrist_norm,
         "hand_open": open_score,
+        "pinch_tip_palm_ratio": pinch_ratio,
         "finger_straight": finger_straight,
         "palm_orientation": palm_orientation,
         "palm_up_score": palm_orientation,

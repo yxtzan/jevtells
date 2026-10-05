@@ -146,6 +146,13 @@ def _fist_valid(features: Mapping[str, Any], times: np.ndarray, event: Mapping[s
     indices = _span(times, float(event["t0"]), float(event["t1"]))
     if not len(indices):
         return False
+    pinch = _array(features, 'pinch_tip_palm_ratio')
+    straight = _array(features, 'finger_straight')
+    if pinch.ndim == 2 and straight.ndim == 3:
+        for side in _sides(event):
+            pinched = (pinch[indices,side] < float(settings.get('pinch_tip_palm_ratio',.35))) & (np.sum(straight[indices,side,1:4] >= 1,axis=1) >= int(settings.get('pinch_extended_fingers',2)))
+            if pinched.any():
+                return False
     openness = _array(features, "hand_open")
     palm_ratio = _array(features, "fingertip_palm_ratio")
     # Older synthetic callers only provided ``hand_open``.  Keep that input

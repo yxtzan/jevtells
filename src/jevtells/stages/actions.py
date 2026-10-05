@@ -280,8 +280,21 @@ def run(
         return payload
 
     settings = _settings(config)
-    features = extract_features(points, settings)
-    detected = detect_actions(features, windows, settings)
+    shots_path = out / 'shots.json'
+    shot_list = json.loads(shots_path.read_text()) if shots_path.exists() else []
+    fps = float(points.get('fps',30))
+    cuts = sorted({round(float(s['t0'])*fps) for s in shot_list if s.get('cut_at_start')})
+    features = extract_features({**points, 'cut_frames':cuts}, settings)
+    if cuts:
+        detected = []
+        total = len(features['t'])
+        for a,b in zip([0,*cuts],[*cuts,total]):
+            piece = {k:(v[a:b] if isinstance(v,np.ndarray) and v.ndim and len(v)==total else v) for k,v in features.items()}
+            t0,t1 = a/fps,b/fps
+            piece_windows = [{**w,'t0':max(t0,float(w['t0'])),'t1':min(t1,float(w['t1']))} for w in windows if float(w['t0'])<t1 and float(w['t1'])>t0]
+            detected.extend(detect_actions(piece,piece_windows,settings))
+    else:
+        detected = detect_actions(features, windows, settings)
     events = [_normalise_event(item, windows, index) for index, item in enumerate(detected, 1)]
     events.sort(key=lambda item: (float(item["t0"]), str(item["id"])))
     for index, event in enumerate(events, 1):
@@ -313,10 +326,12 @@ def run(
         previous.unlink()
     times = np.asarray(features.get("t", []), dtype=float)
     requested_indices: list[int] = []
-    for event in events[:30]:
+    limit = settings.get("review_limit")
+    review_events = events if limit is None else events[:max(0,int(limit))]
+    for event in review_events:
         requested_indices.extend(_nearest_indices(times, (event["t0"], (event["t0"] + event["t1"]) / 2, event["t1"])))
     frames = _read_video_frames(Path(clip) if clip is not None else None, requested_indices)
-    for event in events[:30]:
+    for event in review_events:
         _review_image(features, points, event, review / f"{event['id']}_{event['type']}.png", frames)
     (out / "actions_summary.txt").write_text(_summary(events, occupied_hands), encoding="utf-8")
     return payload

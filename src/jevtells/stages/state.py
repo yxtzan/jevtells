@@ -43,6 +43,15 @@ def _actions(
 ) -> list[str]:
     """Read action events for this window, with an explicit empty result."""
 
+    hands = np.asarray(points.get('hands', []), dtype=float)
+    times = np.asarray(points.get('t', []), dtype=float)
+    mostly_unseen = False
+    if hands.ndim == 4 and len(hands) and len(times)==len(hands):
+        mask = (times>=float(window['t0'])) & (times<float(window['t1']))
+        visible = np.isfinite(hands[...,:2]).all(axis=-1) & (hands[...,0]>=0) & (hands[...,0]<=1) & (hands[...,1]>=0) & (hands[...,1]<=1)
+        ratio = visible.mean(axis=-1)
+        any_hand = (ratio >= float((config or {}).get('actions',{}).get('hand_detection_ratio',.8))).any(axis=1)
+        mostly_unseen = bool(mask.any() and np.mean(~any_hand[mask]) > float((config or {}).get('actions',{}).get('hands_missing_ratio',.5)))
     if actions is not None:
         events = actions.get("events", actions) if isinstance(actions, dict) else actions
         if isinstance(events, list):
@@ -71,7 +80,7 @@ def _actions(
                         selected.append(action_text(event))
                 except (TypeError, ValueError, AttributeError):
                     continue
-            return selected or ["no notable gestures"]
+            return selected + (["hands mostly not visible"] if mostly_unseen else []) if selected else ["hands mostly not visible" if mostly_unseen else "no notable gestures"]
 
     times = np.asarray(points.get("t", []), dtype=float)
     pose = np.asarray(points.get("pose", []), dtype=float)
@@ -87,7 +96,7 @@ def _actions(
         travel = float(np.linalg.norm(np.diff(wrists, axis=0), axis=1).sum()) if len(wrists) > 1 else 0.0
         if travel > 0:
             result.append(f"{name} wrist: total travel {travel:.3f} normalized image units")
-    return result or ["no notable gestures"]
+    return result or ["hands mostly not visible" if mostly_unseen else "no notable gestures"]
 
 
 def run(

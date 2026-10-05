@@ -20,6 +20,14 @@ def checks(config: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     def add(name: str, ok: bool, detail: str, repair: str) -> None:
         result.append({'name':name,'ok':bool(ok),'detail':detail,'repair':repair if not ok else ''})
     add('Python',sys.version_info>=(3,11),'.'.join(str(i) for i in sys.version_info[:3]),'Install Python 3.11 or newer and recreate the virtual environment.')
+    from importlib.metadata import PackageNotFoundError, version
+    try:
+        ocr_version = version('rapidocr-onnxruntime')
+        import onnxruntime
+        cpu = 'CPUExecutionProvider' in onnxruntime.get_available_providers()
+    except (PackageNotFoundError, ImportError):
+        ocr_version, cpu = 'unavailable', False
+    add('RapidOCR CPU', cpu and ocr_version == '1.4.4', ocr_version, 'Install rapidocr-onnxruntime==1.4.4.')
     executable=shutil.which('ffmpeg')
     available=[]
     if executable:
