@@ -105,6 +105,8 @@ def run(states: Mapping[str, Any] | None, judgments: Mapping[str, Any] | None, o
         judgments = json.loads((out / "judgments.json").read_text(encoding="utf-8"))
     settings = (config or {}).get("narrate", {})
     model = str(settings.get("model", "google/gemini-3.8-flash"))
+    reasoning = settings.get("reasoning", {"effort": "low"})
+    max_tokens = int(settings.get("max_tokens", 4000))
     retries = min(2, max(0, int(settings.get("validation_retries", 2))))
     template = data_path("config/narrate_prompt.md").read_text(encoding="utf-8")
     facts_by_id = narrate_facts.run(states, judgments, out, config)
@@ -123,7 +125,7 @@ def run(states: Mapping[str, Any] | None, judgments: Mapping[str, Any] | None, o
     raw_dir.mkdir(parents=True, exist_ok=True)
     generation = time.time_ns()
     results = {key: None for key in facts_by_id}
-    stats = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "cost": 0.0, "failed": 0, "retries": 0, "fallbacks": 0, "windows": {key: {"retries": 0, "fallback": False, "failures": []} for key in active}, "skipped": {key: "speaker_other" for key in facts_by_id if key not in active}}
+    stats = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "reasoning_tokens": 0, "response_records": [], "cost": 0.0, "failed": 0, "retries": 0, "fallbacks": 0, "windows": {key: {"retries": 0, "fallback": False, "failures": []} for key in active}, "skipped": {key: "speaker_other" for key in facts_by_id if key not in active}}
     accepted = {}
     pending = list(active)
     failures = {}
@@ -135,31 +137,43 @@ def run(states: Mapping[str, Any] | None, judgments: Mapping[str, Any] | None, o
             stats["known_cost"] = sum(r["cost"] or 0 for r in request_records)
         if not error:
             destination.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
-        (out / ("narrate_error_meta.json" if error else "narrate_meta.json")).write_text(json.dumps({**stats, "model": model, "lang": lang, "facts_version": 4}, ensure_ascii=False, indent=2), encoding="utf-8")
+        (out / ("narrate_error_meta.json" if error else "narrate_meta.json")).write_text(json.dumps({**stats, "model": model, "reasoning": reasoning, "max_tokens": max_tokens, "lang": lang, "facts_version": 4}, ensure_ascii=False, indent=2), encoding="utf-8")
     for attempt in range(retries + 1):
         if not pending:
             break
-        stats["calls"] += 1
         stats["retries"] = attempt
         for key in pending:
             stats["windows"][key]["retries"] = attempt
         prompt = template.format(facts_json=json.dumps(list(active.values()), ensure_ascii=False), fixed_lines=json.dumps(accepted, ensure_ascii=False), failures_json=json.dumps(failures, ensure_ascii=False), requested_ids=json.dumps(pending), language_name="English" if lang == "en" else "Chinese")
         try:
-            response = active_client.chat([{"role": "user", "content": prompt}], model, response_format={"type": "json_object"}, max_tokens=int(settings.get("max_tokens", 1600)), temperature=0.2, reasoning={"enabled": False})
-            raw = response.get("raw", response.get("response", response))
-            (raw_dir / f"narrate_batch_{generation}_{attempt}.json").write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
-            stats.setdefault("raw_responses", []).append(str(raw_dir / f"narrate_batch_{generation}_{attempt}.json"))
-            usage = response.get("usage") or {}
-            stats["prompt_tokens"] += int(usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0)
-            stats["completion_tokens"] += int(usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0)
-            cost = response.get("cost")
-            stats.setdefault("costs", []).append({"cost": cost, "reason": None if cost is not None else "response has no usage.cost"})
-            stats["cost"] = None if stats["cost"] is None or cost is None else stats["cost"] + float(cost)
-            if any(choice.get("finish_reason") == "length" for choice in raw.get("choices", [])):
+            request_max_tokens = max_tokens
+            for length_attempt in range(2):
+                stats["calls"] += 1
+                response = active_client.chat([{"role": "user", "content": prompt}], model, response_format={"type": "json_object"}, max_tokens=request_max_tokens, temperature=0.2, reasoning=reasoning)
+                raw = response.get("raw", response.get("response", response))
+                raw_path = raw_dir / f"narrate_batch_{generation}_{attempt}_{length_attempt}.json"
+                raw_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+                stats.setdefault("raw_responses", []).append(str(raw_path))
+                usage = response.get("usage") or raw.get("usage") or {}
+                stats["prompt_tokens"] += int(usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0)
+                stats["completion_tokens"] += int(usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0)
+                details = usage.get("completion_tokens_details") or {}
+                reasoning_tokens = details.get("reasoning_tokens")
+                stats["reasoning_tokens"] += int(reasoning_tokens or 0)
+                finish_reasons = [choice.get("finish_reason") for choice in raw.get("choices", [])]
+                cost = response.get("cost")
+                stats["response_records"].append({"call": stats["calls"], "validation_attempt": attempt, "length_attempt": length_attempt, "max_tokens": request_max_tokens, "reasoning_tokens": reasoning_tokens, "finish_reason": finish_reasons[0] if finish_reasons else None, "finish_reasons": finish_reasons, "cost": cost, "raw_path": str(raw_path)})
+                stats.setdefault("costs", []).append({"cost": cost, "reason": None if cost is not None else "response has no usage.cost"})
+                stats["cost"] = None if stats["cost"] is None or cost is None else stats["cost"] + float(cost)
+                if "length" not in finish_reasons:
+                    candidates = _parse_batch(_content(raw))
+                    break
+                stats["failed"] += 1
                 stats["truncated_responses"] = stats.get("truncated_responses", 0) + 1
                 candidates = {}
-            else:
-                candidates = _parse_batch(_content(raw))
+                if length_attempt == 0:
+                    stats["length_retries"] = stats.get("length_retries", 0) + 1
+                    request_max_tokens *= 2
         except Exception as error:
             stats["failed"] += 1
             stats["error"] = type(error).__name__

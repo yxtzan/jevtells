@@ -230,7 +230,7 @@ def _finish_run(
         if path.exists():
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
-                api_stats[name] = {key: payload.get(key) for key in ("calls", "prompt_tokens", "completion_tokens", "cost", "model", "failed", "retries", "fallbacks", "skipped", "windows") if key in payload}
+                api_stats[name] = {key: payload.get(key) for key in ("calls", "prompt_tokens", "completion_tokens", "reasoning_tokens", "response_records", "length_retries", "cost", "model", "failed", "retries", "fallbacks", "skipped", "windows") if key in payload}
                 if name == "scene" and "model" in payload:
                     api_stats[name]["cost"] = payload.get("cost")
             except (OSError, ValueError, TypeError):

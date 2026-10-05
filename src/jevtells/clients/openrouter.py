@@ -125,8 +125,23 @@ def _request_json(
         except (ValueError, TypeError):
             parsed = {}
         cost = _cost(parsed) if isinstance(parsed, dict) else None
+        cost_reason = None if cost is not None else "response has no valid usage.cost"
+        api_error = parsed.get("error") if isinstance(parsed, dict) else None
+        metadata = api_error.get("metadata") if isinstance(api_error, Mapping) else None
+        if (cost is None and status == 400 and isinstance(metadata, Mapping)
+                and "provider_name" in metadata and metadata["provider_name"] is None):
+            cost = 0.0
+            cost_reason = "未路由，按 0 计：HTTP 400 且 error.metadata.provider_name 显式为 null，OpenRouter 层拒绝，未发给模型服务商"
+        usage = parsed.get("usage", {}) if isinstance(parsed, dict) else {}
+        details = usage.get("completion_tokens_details", {}) if isinstance(usage, Mapping) else {}
+        choices = parsed.get("choices", []) if isinstance(parsed, dict) else []
+        finish_reasons = [choice.get("finish_reason") for choice in choices if isinstance(choice, Mapping)] if isinstance(choices, list) else []
         event = {"status": status, "body": safe, "error": error, "cost": cost,
-                 "cost_reason": None if cost is not None else "response has no valid usage.cost",
+                 "cost_reason": cost_reason,
+                 "reasoning_tokens": details.get("reasoning_tokens") if isinstance(details, Mapping) else None,
+                 "finish_reason": finish_reasons[0] if finish_reasons else None,
+                 "finish_reasons": finish_reasons,
+                 "max_tokens": payload.get("max_tokens"),
                  "model": payload.get("model"), "attempt": attempt + 1}
         if error and audit_dir is not None:
             audit_dir.mkdir(parents=True, exist_ok=True)
