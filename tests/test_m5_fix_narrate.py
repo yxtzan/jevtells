@@ -63,3 +63,11 @@ def test_unavailable_facts_and_one_word_quote_do_not_fabricate_fallback(tmp_path
     assert result['W0'] is None
     meta=json.loads((tmp_path/'narrate_meta.json').read_text())
     assert meta['unavailable']==1 and meta['calls']==meta['failed']==1
+
+
+def test_bilateral_movement_requires_a_measured_overlapping_pair():
+    facts={'subtitle':'hello world','highlights':[],'gestures':['右手下压（幅度大）','左手抬手（幅度中）']}
+    line={'line':'双手下压，解释芯片设计','quote':'hello world'}
+    assert any('bilateral' in e for e in validation_errors(line,facts,[],'','zh'))
+    facts['gestures']=['双手同时下压（幅度中）']
+    assert validation_errors(line,facts,[],'','zh')==[]

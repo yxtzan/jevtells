@@ -27,6 +27,13 @@ def validation_errors(parsed: Mapping[str, Any], facts: Mapping[str, Any], previ
         errors.append("one sentence without a final period is required")
     if RED_FLAGS.search(line):
         errors.append("line contains a prohibited tone or private/mental-state claim")
+    # Preserve the factual movement constraint: a bilateral action needs
+    # the measured, overlapping pair, not two different single-hand events.
+    if lang == "zh" and "gestures" in facts:
+        for match in re.finditer(r"双(?:手|掌)(?:同时)?(?:向下)?(下压|抬起|抬手|张开)", line):
+            action = {"抬起": "抬手", "抬手": "抬手", "下压": "下压", "张开": "张开手掌"}[match[1]]
+            if not any("双手同时" + action in str(gesture) for gesture in facts["gestures"]):
+                errors.append("bilateral movement absent from facts.gestures")
     if line.startswith(("他", "她", "在")) or (speaker and line.casefold().startswith(speaker.casefold())) or re.match(r"^(he|she|they|the speaker|in|at)\b", line, re.IGNORECASE):
         errors.append("line starts with the name, a pronoun or a scene description")
     if line.count("「") > 1 or line.count("」") > 1 or line.count("「") != line.count("」"):
