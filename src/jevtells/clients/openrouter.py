@@ -151,10 +151,11 @@ def _request_json(
                 with urlopen(request, timeout=float(timeout)) as response:
                     status = response.status
                     raw = response.read().decode("utf-8")
-            record(int(status), raw)
             parsed = json.loads(_redact(raw, key))
             if not isinstance(parsed, dict):
+                record(int(status), raw, "InvalidResponse")
                 raise OpenRouterError("OpenRouter 返回的 JSON 顶层不是对象")
+            record(int(status), raw)
             return parsed
         except HTTPError as error:
             response_body = error.read().decode("utf-8", errors="replace")
@@ -169,6 +170,7 @@ def _request_json(
             if not isinstance(error, (TimeoutError, socket.timeout)) and not isinstance(getattr(error, "reason", None), (TimeoutError, socket.timeout)):
                 raise last_error from error
         except json.JSONDecodeError as error:
+            record(int(status), raw, "InvalidJSON")
             raise OpenRouterError("OpenRouter response is invalid JSON") from error
         if attempt + 1 < max(1, int(attempts)):
             sleep(2 * (2**attempt))

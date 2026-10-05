@@ -127,14 +127,15 @@ def run(states: Mapping[str, Any] | None, judgments: Mapping[str, Any] | None, o
     accepted = {}
     pending = list(active)
     failures = {}
-    def save():
+    def save(error=False):
         if request_records:
             stats["http_calls"] = len(request_records)
             stats["request_records"] = request_records
             stats["cost"] = None if any(r["cost"] is None for r in request_records) else sum(r["cost"] for r in request_records)
             stats["known_cost"] = sum(r["cost"] or 0 for r in request_records)
-        destination.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
-        (out / "narrate_meta.json").write_text(json.dumps({**stats, "model": model, "lang": lang, "facts_version": 4}, ensure_ascii=False, indent=2), encoding="utf-8")
+        if not error:
+            destination.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
+        (out / ("narrate_error_meta.json" if error else "narrate_meta.json")).write_text(json.dumps({**stats, "model": model, "lang": lang, "facts_version": 4}, ensure_ascii=False, indent=2), encoding="utf-8")
     for attempt in range(retries + 1):
         if not pending:
             break
@@ -161,12 +162,12 @@ def run(states: Mapping[str, Any] | None, judgments: Mapping[str, Any] | None, o
         except Exception as error:
             stats["failed"] += 1
             stats["error"] = type(error).__name__
-            save()
             stats["cost"] = None
             stats.setdefault("costs", []).append({"cost": None, "reason": "API failed; see raw error records"})
-            save()
             if (config or {}).get("stop_on_api_error", False) or isinstance(error, OpenRouterError):
+                save(error=True)
                 raise
+            save()
             break
         failures = {}
         fixed = dict(accepted)

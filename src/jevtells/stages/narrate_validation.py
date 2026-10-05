@@ -36,7 +36,9 @@ def highlight_claims(line: str) -> set[str]:
             for match in re.finditer(prefix + r"(?:与(?:自信度|专注度|紧张度))?(?:降至|升至|达到|为|处于)?(?:全场)?(?:最高|最低|持续走高|持续走低|明显上升|明显下降|有所上升|有所下降|continues rising|continues falling|reaches the highest level|reaches the lowest level|rises markedly|falls markedly|rises somewhat|falls somewhat)", line, re.I):
                 wording = match[0]
                 trend = next((term for term in ("最高", "最低", "持续走高", "持续走低", "明显上升", "明显下降", "有所上升", "有所下降") if term in wording), wording.casefold())
-                claims.add(name.casefold() + ":" + trend)
+                for metric_name in tr["facts"]["scores"].values():
+                    if metric_name.casefold() in wording.casefold():
+                        claims.add(metric_name.casefold() + ":" + trend)
         for category, group in (("意图", "intents"), ("情绪", "emotions")):
             for label in tr[group].values():
                 pattern = re.escape(category) + r"转为\s*" + re.escape(label) if language == "zh" else r"(?:shifts|turns) to\s+" + re.escape(label)
@@ -77,9 +79,10 @@ def validation_errors(parsed: Mapping[str, Any], facts: Mapping[str, Any], previ
             errors.append("corner quote contains a display label or summary term; use a translated subtitle phrase")
         if lang == "zh" and (not re.search(r"[\u3400-\u9fff]", phrase) or re.search(r"[A-Za-z]", phrase)):
             errors.append("corner quote must be a Chinese translation of the current subtitle phrase")
-    if any(line.casefold().startswith(name) for name in names if name in {
-            value.casefold() for language in ("zh", "en") for group in ("intents", "emotions")
-            for value in load_translations(language)[group].values()}):
+    opening_names = {value.casefold() for language in ("zh", "en")
+                     for tr in [load_translations(language)] for group in ("intents", "emotions")
+                     for value in tr[group].values()}
+    if any(line.casefold().startswith(name) for name in opening_names):
         errors.append("line starts with an intent or emotion display label")
     if previous and repeated_highlights(line, previous[-1]):
         errors.append("highlight claim repeats the adjacent previous line")

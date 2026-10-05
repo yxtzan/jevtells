@@ -86,3 +86,17 @@ def test_truncated_response_is_rejected_even_if_content_parses(tmp_path):
     run({'W0': {'subtitle': {'current': 'hello world'}}}, {}, tmp_path, client=client)
     meta = json.loads((tmp_path/'narrate_meta.json').read_text())
     assert meta['truncated_responses'] == 1 and meta['calls'] == 2 and meta['fallbacks'] == 0
+
+
+def test_failed_generation_preserves_previous_narration_cache(tmp_path):
+    original = {'W0': {'line':'之前成功的解说','quote':'hello world'}}
+    (tmp_path/'narration.json').write_text(json.dumps(original))
+    (tmp_path/'narrate_meta.json').write_text('{"model":"old/model"}')
+    client=OpenRouterClient(api_key='secret',transport=lambda *args:(400,'{"error":"mandatory reasoning"}'))
+    with pytest.raises(OpenRouterError):
+        run({'W0':{'subtitle':{'current':'hello world'}}},{},tmp_path,force=True,client=client)
+    assert json.loads((tmp_path/'narration.json').read_text())==original
+    assert json.loads((tmp_path/'narrate_meta.json').read_text())['model']=='old/model'
+    failed=json.loads((tmp_path/'narrate_error_meta.json').read_text())
+    assert failed['cost'] is None and failed['http_calls']==1
+    assert len(list((tmp_path/'raw').glob('openrouter_error_*.json')))==1
