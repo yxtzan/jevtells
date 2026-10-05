@@ -218,6 +218,7 @@ def chat(
     response_format: Mapping[str, Any] | None = None,
     max_tokens: int | None = None,
     temperature: float = 0.2,
+    reasoning: Mapping[str, Any] | None = None,
     timeout: float = 90.0,
     attempts: int = 4,
     api_key: str | None = None,
@@ -246,6 +247,8 @@ def chat(
     payload: dict[str, Any] = {"model": model, "messages": serialised, "temperature": temperature}
     if response_format is not None:
         payload["response_format"] = dict(response_format)
+    if reasoning is not None:
+        payload["reasoning"] = dict(reasoning)
     if max_tokens is not None:
         payload["max_tokens"] = int(max_tokens)
     return _result(_request_json(CHAT_URL, payload, timeout=timeout, attempts=attempts, api_key=api_key, env_path=env_path, transport=transport, sleep=sleep))

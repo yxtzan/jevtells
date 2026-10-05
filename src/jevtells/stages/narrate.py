@@ -130,7 +130,7 @@ def run(states: Mapping[str, Any] | None, judgments: Mapping[str, Any] | None, o
             stats["windows"][key]["retries"] = attempt
         prompt = template.format(facts_json=json.dumps(list(active.values()), ensure_ascii=False), fixed_lines=json.dumps(accepted, ensure_ascii=False), failures_json=json.dumps(failures, ensure_ascii=False), requested_ids=json.dumps(pending), language_name="English" if lang == "en" else "Chinese")
         try:
-            response = active_client.chat([{"role": "user", "content": prompt}], model, response_format={"type": "json_object"}, max_tokens=int(settings.get("max_tokens", 1600)), temperature=0.2)
+            response = active_client.chat([{"role": "user", "content": prompt}], model, response_format={"type": "json_object"}, max_tokens=int(settings.get("max_tokens", 1600)), temperature=0.2, reasoning={"enabled": False})
             raw = response.get("raw", response.get("response", response))
             (raw_dir / f"narrate_batch_{attempt}.json").write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
             usage = response.get("usage") or {}
@@ -162,7 +162,15 @@ def run(states: Mapping[str, Any] | None, judgments: Mapping[str, Any] | None, o
     for key, facts in active.items():
         parsed = accepted.get(key)
         if parsed is None:
-            parsed = _fallback(facts, lang, previous)
+            try:
+                parsed = _fallback(facts, lang, previous)
+            except ValueError:
+                # No measured facts or no possible exact quotation: keep
+                # this window unavailable instead of fabricating a sentence.
+                stats["windows"][key]["unavailable"] = "no factual fallback satisfies all validation rules"
+                stats["windows"][key]["validation_errors"] = [stats["windows"][key]["unavailable"]]
+                stats["unavailable"] = stats.get("unavailable",0)+1
+                continue
             stats["fallbacks"] += 1
             stats["windows"][key]["fallback"] = True
         Narration.model_validate(parsed)
