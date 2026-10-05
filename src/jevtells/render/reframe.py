@@ -29,11 +29,12 @@ def detect_subtitles(clip: Path, settings: Mapping[str, Any]) -> dict[str, Any]:
     width,height=int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)),int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps=capture.get(cv2.CAP_PROP_FPS) or 30
     total=int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
-    top=round(height*(1-float(settings.get("subtitle_strip",.2))))
+    top=round(height*(1-max(.30,float(settings.get("subtitle_strip",.2)))))
+    text_tops=[]
     columns=np.zeros(width,dtype=float)
     samples=[]
     try:
-        for frame in range(0,total,max(1,round(fps*float(settings.get("sample_seconds",1))))):
+        for frame in range(0,total,max(1,round(fps*float(settings.get("sample_seconds",.5))))):
             capture.set(cv2.CAP_PROP_POS_FRAMES,frame)
             ok,image=capture.read()
             if not ok:
@@ -60,11 +61,36 @@ def detect_subtitles(clip: Path, settings: Mapping[str, Any]) -> dict[str, Any]:
             observed=np.flatnonzero(edges.any(axis=0))
             if len(observed):
                 columns+=edges.sum(axis=0)/255
-                samples.append({"seconds":frame/fps,"bounds":[max(0,int(observed[0])-2),min(width,int(observed[-1])+3)]})
+                rows=np.flatnonzero(text.any(axis=1))
+                text_top=top+int(rows[0])
+                text_tops.append(text_top)
+                samples.append({"seconds":frame/fps,"bounds":[max(0,int(observed[0])-2),min(width,int(observed[-1])+3)],"text_top":text_top})
     finally:
         capture.release()
     observed=np.flatnonzero(columns>0)
-    return {"bounds":[max(0,int(observed[0])-2),min(width,int(observed[-1])+3)] if len(observed) else None,"samples":samples,"source":[width,height],"strip_y":top}
+    return {"bounds":[max(0,int(observed[0])-2),min(width,int(observed[-1])+3)] if len(observed) else None,"samples":samples,"source":[width,height],"strip_y":subtitle_strip_y(height,text_tops),"sample_seconds":float(settings.get("sample_seconds",.5))}
+
+
+def subtitle_strip_y(height: int, text_tops: Sequence[float]) -> int:
+    return max(0, round(min([height*.8, *(top-6 for top in text_tops)])))
+
+
+def subtitle_mode(detection: Mapping[str, Any], width: int, height: int, settings: Mapping[str, Any]) -> dict[str, Any]:
+    """Require consecutive oversized samples, never trigger on a lone edge."""
+    interval=float(settings.get("sample_seconds",.5))
+    limit=min(width,height*4/3)-32
+    previous=None
+    runs=[]
+    for sample in detection.get("samples",[]):
+        bounds=sample.get("bounds")
+        oversized=bool(bounds and bounds[1]-bounds[0]>limit)
+        if oversized and previous is not None and sample["seconds"]-previous["seconds"]<=interval*1.1:
+            runs.append([previous["seconds"],sample["seconds"]])
+        previous=sample if oversized else None
+    policy=str(settings.get("oversized_subtitles","strip"))
+    if policy not in {"strip","center","off"}:
+        raise ValueError("oversized_subtitles must be strip, center or off")
+    return {"mode":policy if runs else "center", "oversized":bool(runs),"oversized_pairs":runs,"strip_y":detection.get("strip_y",round(height*.8)),"width_limit":limit}
 
 
 def plan_crops(width: int, height: int, shots: Sequence[Mapping[str, Any]], points: Mapping[str, Any], subtitles: Sequence[float] | None, settings: Mapping[str, Any]) -> dict[str, Any]:

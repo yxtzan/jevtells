@@ -25,9 +25,10 @@ from .geometry import Layout
 from .labels import schedule
 from .panels import Panels, opacity
 from .text import Fonts, draw_fitted
+from .layout_audit import intersects, segment_intersects_rect
 from .body_zones import body_zones
 from .placement import card_side, leader, select_positions
-from .reframe import crop_at, detect_subtitles, plan_crops
+from .reframe import crop_at, detect_subtitles, plan_crops, subtitle_mode
 
 
 def blur_frame(frame: Image.Image, rectangles: Sequence[Sequence[float]], original: tuple[int, int], radius: float) -> Image.Image:
@@ -65,6 +66,7 @@ class Composer:
         pose = np.asarray(points.get("pose", []), dtype=float)
         hands = np.asarray(points.get("hands", []), dtype=float)
         self.anchors: dict[str, np.ndarray] = {}
+        self.raw_anchors: dict[str, np.ndarray] = {}
         for slot, side in (("left", 1), ("right", 0)):
             wrist = int(settings["label"]["wrist_points"][side])
             xy = pose[:, wrist, :2].copy()
@@ -74,13 +76,17 @@ class Composer:
                 palm = hands[:, side, settings["label"]["palm_points"], :2]
                 valid = np.isfinite(palm).all(axis=(1, 2))
                 xy[valid] = palm[valid].mean(axis=1)
+            self.raw_anchors[slot] = xy.copy()
             self.anchors[slot] = smooth_zero_phase(xy, smooth_window, polynomial) if smoothing.get("enabled", True) else xy
         head = pose[:, int(settings["label"]["head_point"]), :2]
+        self.raw_anchors["head"] = head.copy()
         self.anchors["head"] = smooth_zero_phase(head, smooth_window, polynomial)
         self.card_sides = {}
         for shot in self.shots:
             if layout.kind == "h":
-                self.card_sides[int(shot["index"])] = card_side(shot.get("target_box"),layout.source[0],self.p["card"][2]*layout.source[0]/layout.video[2],self.layout.px(settings.get("layout",{}).get("safe_margin",24))/layout.scale*layout.source[0]/layout.video[2])
+                start,end=(round(float(shot[k])*float(points.get("fps",30))) for k in ("t0","t1"))
+                core=body_zones(pose[start:end],layout.source,self.visibility).get("torso",shot.get("target_box"))
+                self.card_sides[int(shot["index"])] = card_side(core,layout.source[0],self.p["card"][2]*layout.source[0]/layout.video[2],self.layout.px(settings.get("layout",{}).get("safe_margin",24))/layout.scale*layout.source[0]/layout.video[2])
         self.placements: dict[int, dict[str, Any]] = {}
         for shot in self.shots:
             if self.reframe_plan.get("enabled"):
@@ -215,7 +221,7 @@ class Composer:
             vx, vy, vw, vh = self.layout.video
             if not self.layout.px(vx) <= anchor[0] <= self.layout.px(vx + vw) or not self.layout.px(vy) <= anchor[1] <= self.layout.px(vy + vh):
                 continue
-            if anchor[1] >= self.layout.px(vy + vh * (1 - self.settings["subtitle_exclusion_ratio"])):
+            if not self.layout.strip_video and anchor[1] >= self.layout.px(vy + vh * (1 - self.settings["subtitle_exclusion_ratio"])):
                 continue
             if self.layout.kind == "h":
                 _cx, cy, cw, ch = self.p["card"]
@@ -233,15 +239,29 @@ class Composer:
             body_height = self.layout.px(self.p["label_size"] * self.settings["components"]["line_height"] + 2 * label["padding"][1])
             start = (x + sprite.width if anchor[0] >= x+sprite.width/2 else x, y + round(body_height * zoom / 2))
             elbow = (round(start[0] + (anchor[0] - start[0]) * label["leader_fraction"]), start[1])
+            rect=[x,y,x+sprite.width,y+sprite.height]
+            collisions=[zone["name"] for zone in self.audit["forbidden"] if intersects(rect,zone["rect"])]
+            collisions += ["label:"+other["slot"] for other in self.audit["labels"] if intersects(rect,other["rect"])]
+            if collisions:
+                self.audit.setdefault("suppressed_labels",[]).append({"slot":slot,"event":event["id"],"rect":rect,"zones":collisions,"fallback":bool(not placement or slot in placement.get("fallback_slots",[]))})
+                continue
+            raw_xy=self.raw_anchors["head" if event.get("limb") in {"head","body"} else slot][point_index]
+            real_anchor=self.layout.source_point(raw_xy[0]*self.layout.source[0],raw_xy[1]*self.layout.source[1]) if np.isfinite(raw_xy).all() else anchor
+            real_start=(x+sprite.width if real_anchor[0]>=x+sprite.width/2 else x,start[1])
+            real_elbow=(round(real_start[0]+(real_anchor[0]-real_start[0])*label["leader_fraction"]),real_start[1])
+            path=[start,elbow,anchor]
+            real_path=[real_start,real_elbow,real_anchor]
+            blocked_face=any(segment_intersects_rect(a,b,zone["rect"]) for points in (path,real_path) for a,b in zip(points,points[1:]) for zone in self.audit["leader_zones"] if zone["name"]=="face")
             color = (*tuple(int(self.c["lime"][i:i+2], 16) for i in (1, 3, 5)), round(255 * alpha))
             leader = Image.new("RGBA", image.size)
             ld = ImageDraw.Draw(leader)
-            ld.line([start, elbow, anchor], fill=color, width=max(1, self.layout.px(label["leader_width"])), joint="curve")
+            if not blocked_face:
+                ld.line(path, fill=color, width=max(1, self.layout.px(label["leader_width"])), joint="curve")
             radius = self.layout.px(label["point_radius"])
             ld.ellipse((anchor[0] - radius, anchor[1] - radius, anchor[0] + radius, anchor[1] + radius), fill=color, outline=self.c["ink"], width=max(1, self.layout.px(label["point_outline"])))
             image.alpha_composite(leader)
             image.alpha_composite(opacity(sprite, alpha), (x, y))
-            self.audit["labels"].append({"slot": slot, "event": event["id"], "rect": [x, y, x + sprite.width, y + sprite.height], "leader": [list(start),list(elbow),list(anchor)], "fallback": bool(not placement or slot in placement.get("fallback_slots",[]))})
+            self.audit["labels"].append({"slot": slot, "event": event["id"], "rect": [x, y, x + sprite.width, y + sprite.height], "leader": [list(p) for p in path] if not blocked_face else [], "actual_hand_leader": [list(p) for p in real_path] if not blocked_face else [], "blocked_face_leader": blocked_face, "fallback": bool(not placement or slot in placement.get("fallback_slots",[]))})
 
     def forbidden(self, seconds: float) -> list[dict[str, Any]]:
         zones = []
@@ -253,7 +273,10 @@ class Composer:
             if name != "hands":
                 zones.append({"name": name, "rect": list(self.layout.source_rect((x0,y0,x1-x0,y1-y0)))})
         ratio = self.settings["subtitle_exclusion_ratio"]
-        zone("subtitles", (vx, vy + vh * (1-ratio), vw, vh * ratio))
+        if self.layout.strip_video:
+            zone("subtitle_strip", self.layout.strip_video)
+        else:
+            zone("subtitles", (vx, vy + vh * (1-ratio), vw, vh * ratio))
         for rect in self.blur:
             zones.append({"name": "blur", "rect": list(self.layout.source_rect(rect))})
         margin = float(self.settings.get("layout", {}).get("safe_margin", 24))
@@ -331,6 +354,7 @@ class Composer:
         self.audit = {"seconds": seconds, "output": list(self.layout.output), "labels": [], "forbidden": self.forbidden(seconds)}
         self.audit["leader_zones"] = [zone for zone in self.audit["forbidden"] if zone["name"] in {"face", "torso"}]
         source = blur_frame(source, self.blur, self.layout.source, self.settings["blur_radius"])
+        original_source=source
         if self.layout.crop:
             cx,cy,cw,ch=self.layout.crop
             sx,sy=source.width/self.layout.source[0],source.height/self.layout.source[1]
@@ -338,6 +362,11 @@ class Composer:
         x, y, width, height = self.layout.video
         image = Image.new("RGBA", self.layout.output, self.c["ink"])
         image.paste(source.resize((self.layout.px(width), self.layout.px(height)), Image.Resampling.BICUBIC), self.layout.point(x, y))
+        if self.layout.strip_video and self.layout.strip_y is not None:
+            sy=original_source.height/self.layout.source[1]
+            strip=original_source.crop((0,round(self.layout.strip_y*sy),original_source.width,original_source.height))
+            sx,sy,sw,sh=self.layout.strip_video
+            image.paste(strip.resize((self.layout.px(sw),self.layout.px(sh)),Image.Resampling.BICUBIC),self.layout.point(sx,sy))
         image.alpha_composite(self.panels.base)
         index, gap = window_at(self.windows, seconds)
         attenuation = self.settings["gap_opacity"] if gap else 1.0
@@ -447,11 +476,20 @@ def run(clip: Path, out: Path, windows: Sequence[Mapping[str, Any]], points: Map
                 subtitle_result=detect_subtitles(clip,settings["reframe"]) if not subtitles else {"bounds":None}
                 (out / "burned_subtitles.json").write_text(json.dumps(subtitle_result,indent=2))
                 plan=plan_crops(*(source_size or frame_size),shot_list,points,subtitle_result["bounds"],settings["reframe"])
-                effective["v"].update(effective["v_reframe"])
-                effective["components"].update(effective["reframe_components"])
+                mode=subtitle_mode(subtitle_result,*(source_size or frame_size),settings["reframe"]) if not subtitles else {"mode":"center","oversized":False}
+                plan.update(mode)
+                if mode["mode"] == "off":
+                    plan["enabled"]=False
+                else:
+                    effective["v"].update(effective["v_reframe"])
+                    effective["components"].update(effective["reframe_components"])
+                    if mode["mode"] == "strip":
+                        for shot in plan["shots"]:
+                            shot["height"]=mode["strip_y"]
             (out / f"reframe_{kind}.json").write_text(json.dumps(plan,indent=2))
-            geometry = Layout.create(kind, effective, source_size or frame_size,crop_at(plan,0))
+            geometry = Layout.create(kind, effective, source_size or frame_size,crop_at(plan,0),strip_y=plan.get("strip_y") if plan.get("mode")=="strip" else None)
             painter = Composer(effective, geometry, windows, points, events, judgments, narration, transcript, title=title, sources=_sources(out, settings, config, lang), lang=lang, blur=blur, subtitles=subtitles, config=config, shots=shot_list,reframe_plan=plan)
+            (out / f"panel_spacing_{kind}.json").write_text(json.dumps({"geometry":{"picture":geometry.video,"strip":geometry.strip_video,"strip_y":geometry.strip_y},"spacing":getattr(painter.panels,"spacing",None),"positions":painter.panels.p},indent=2))
             (out / f"layout_{kind}.json").write_text(json.dumps(list(painter.placements.values()), ensure_ascii=False, indent=2))
             if debug_layout:
                 painter.debug_layout(clip, out)

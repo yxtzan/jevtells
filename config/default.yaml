@@ -130,7 +130,8 @@ render:
   reframe:
     max_offset: 0.08
     subtitle_strip: 0.20
-    sample_seconds: 1
+    sample_seconds: 0.5
+    oversized_subtitles: strip
     min_glyphs: 6
     text_value: 140
     text_saturation: 85
