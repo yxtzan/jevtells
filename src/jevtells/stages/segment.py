@@ -25,7 +25,7 @@ def run(transcript: dict[str, Any], shots: list[dict[str, Any]], out: Path, forc
     for segment in transcript.get("segments", []):
         current = dict(segment)
         current["words"] = sorted(current.get("words") or [], key=lambda item: float(item["t0"]))
-        if normalized:
+        if normalized and transcript.get("subtitle_source") != "ocr":
             last = normalized[-1]
             combined_duration = float(current["t1"]) - float(last["t0"])
             last_duration = float(last["t1"]) - float(last["t0"])
@@ -46,14 +46,14 @@ def run(transcript: dict[str, Any], shots: list[dict[str, Any]], out: Path, forc
             cut = max(remaining_candidates or candidates or [start + max_window])
             selected = [word for word in words if start <= float(word["t0"]) and float(word["t1"]) <= cut]
             text = " ".join(str(word.get("w", "")) for word in selected) or str(segment.get("text", ""))
-            window = Window(id=f"W{index:02d}", index=index, t0=start, t1=cut, subtitle=text, prev_subtitle=previous)
+            window = Window(id=f"W{index:02d}", index=index, t0=start, t1=cut, subtitle=text, subtitle_translation=segment.get("subtitle_translation", ""), prev_subtitle=previous)
             windows.append(window.model_dump())
             previous = window.subtitle
             index += 1
             start = cut
         selected = [word for word in words if start <= float(word["t0"]) and float(word["t1"]) <= end]
         text = " ".join(str(word.get("w", "")) for word in selected) or str(segment.get("text", ""))
-        window = Window(id=f"W{index:02d}", index=index, t0=start, t1=end, subtitle=text, prev_subtitle=previous)
+        window = Window(id=f"W{index:02d}", index=index, t0=start, t1=end, subtitle=text, subtitle_translation=segment.get("subtitle_translation", ""), prev_subtitle=previous)
         windows.append(window.model_dump())
         previous = window.subtitle
         index += 1

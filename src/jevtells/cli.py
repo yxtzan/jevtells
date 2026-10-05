@@ -56,6 +56,7 @@ def _arguments() -> argparse.Namespace:
     run_parser.add_argument("--scene", default=None)
     run_parser.add_argument("--lang", choices=("zh", "en"), default="zh")
     run_parser.add_argument("--srt")
+    run_parser.add_argument("--subtitle-source", choices=("auto", "ocr", "asr", "srt"), default="auto")
     run_parser.add_argument("--start", type=float, default=0.0)
     run_parser.add_argument("--duration", type=float)
     run_parser.add_argument("--force", action="store_true")
@@ -360,17 +361,34 @@ def main() -> None:
     if arguments.until == "track":
         return
     stage_start = time.perf_counter()
-    transcript = _invoke(asr.run, audio, output, arguments.srt, force_stage("asr"), model_name=config.get("models", {}).get("whisper", "small"))
+    # Acoustic words remain independent of the selected subtitle clock.
+    from .stages import ocr
+    requested = getattr(arguments, "subtitle_source", "auto")
+    detection = None
+    if requested == "ocr" or (requested == "auto" and not arguments.srt and getattr(arguments, "subtitles", "on") == "off"):
+        from .render.reframe import detect_subtitles
+        detection = detect_subtitles(clip, config.get("render", {}).get("reframe", {}))
+    source = ocr.resolve_source(requested, arguments.srt, getattr(arguments, "subtitles", "on"), bool(detection and detection.get("bounds")))
+    audio_transcript = _invoke(asr.run, audio, output, None, force_stage("asr"), model_name=config.get("models", {}).get("whisper", "small"), destination_name="transcript_asr.json")
+    if source == "ocr":
+        transcript = ocr.run(clip, output, audio_transcript["language"], config, force=force_stage("asr"), detection=detection)
+    elif source == "srt":
+        transcript = asr._parse_srt(Path(arguments.srt))
+        transcript["language"] = audio_transcript["language"]
+    else:
+        transcript = dict(audio_transcript)
+    transcript["subtitle_source"] = source
+    (output / "transcript.json").write_text(json.dumps(transcript, ensure_ascii=False, indent=2))
     stage_times["asr"] = time.perf_counter() - stage_start
     if arguments.until == "asr":
         return
     stage_start = time.perf_counter()
-    voice_features = _invoke(voice.run, audio, output, force_stage("voice"), config=config)
+    voice_features = _invoke(voice.run, audio, output, force_stage("voice"), config=config, transcript=audio_transcript)
     stage_times["voice"] = time.perf_counter() - stage_start
     if arguments.until == "voice":
         return
     stage_start = time.perf_counter()
-    shot_list = _invoke(shots.run, clip, output, force_stage("shots"), points=points, config=config)
+    shot_list = _invoke(shots.run, clip, output, force_stage("shots"), points=points, config=config, detections=detections)
     stage_times["shots"] = time.perf_counter() - stage_start
     if arguments.until == "shots":
         return
@@ -384,7 +402,7 @@ def main() -> None:
     if marked != windows:
         windows = marked
         (output / "windows.json").write_text(json.dumps(windows, ensure_ascii=False, indent=2), encoding="utf-8")
-    voice_features = voice.refresh_window_metrics(voice_features, windows, transcript, output, config)
+    voice_features = voice.refresh_window_metrics(voice_features, windows, audio_transcript, output, config)
     stage_times["segment"] = time.perf_counter() - stage_start
     if arguments.until == "segment":
         return

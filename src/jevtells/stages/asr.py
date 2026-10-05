@@ -21,9 +21,9 @@ def _parse_srt(path: Path) -> dict[str, Any]:
     return {"language": "unknown", "segments": segments}
 
 
-def run(wav: Path, out: Path, srt: str | None = None, force: bool = False, model_name: str = "small") -> dict[str, Any]:
+def run(wav: Path, out: Path, srt: str | None = None, force: bool = False, model_name: str = "small", destination_name: str = "transcript.json") -> dict[str, Any]:
     """Transcribe audio with faster-whisper or import the supplied SRT."""
-    destination = out / "transcript.json"
+    destination = out / destination_name
     if destination.exists() and not force:
         return json.loads(destination.read_text())
     if srt:

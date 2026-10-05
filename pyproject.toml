@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 name = "jevtells"
 version = "0.5.0"
 requires-python = ">=3.11"
-dependencies = ["numpy", "opencv-contrib-python", "mediapipe", "pydantic", "pyyaml", "librosa", "scipy", "faster-whisper", "Pillow", "python-dotenv"]
+dependencies = ["numpy<2", "opencv-python==4.11.0.86", "opencv-contrib-python==4.11.0.86", "mediapipe", "pydantic", "pyyaml", "librosa", "scipy", "faster-whisper", "Pillow", "python-dotenv", "rapidocr-onnxruntime==1.4.4"]
 [project.scripts]
 jevtells = "jevtells.cli:main"
 [tool.setuptools.packages.find]

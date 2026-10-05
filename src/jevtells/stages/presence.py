@@ -50,7 +50,7 @@ def split_presence_changes(windows: Sequence[Mapping[str, Any]], shots: Sequence
         for a, b in zip(edges, edges[1:]):
             row = dict(window)
             row.update(t0=a, t1=b)
-            if len(edges) > 2:
+            if len(edges) > 2 and words:
                 row['subtitle'] = ' '.join(str(word['w']) for word in words if a <= (float(word['t0']) + float(word['t1'])) / 2 < b)
             result.append(row)
     for index, row in enumerate(result):

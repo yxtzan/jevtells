@@ -13,6 +13,7 @@ class Window(BaseModel):
     t0: float
     t1: float
     subtitle: str
+    subtitle_translation: str = ""
     prev_subtitle: str = ""
     shot: str = "target"
     kind: str = "speech"
