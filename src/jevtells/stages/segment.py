@@ -65,34 +65,48 @@ def run(transcript: dict[str, Any], shots: list[dict[str, Any]], out: Path, forc
     return windows
 
 
-def merge_short_windows(windows: list[dict[str, Any]], config: dict[str, Any]) -> list[dict[str, Any]]:
-    """Merge only adjacent equal presence/speaker classes, retaining literal text."""
-    rows = [dict(w) for w in windows]
+def merge_short_windows(windows: list[dict[str, Any]], config: dict[str, Any], boundaries: list[float] | None = None) -> list[dict[str, Any]]:
+    """Join literal cues within one class, preferring 2–5 second partitions.
+
+    Untimed OCR/SRT cues are indivisible: only exceed max_seconds when this
+    is required to remove a short cue, never invent word timestamps.
+    """
     minimum = float(config_value(config, 'windows.min_seconds', 2.0))
     maximum = float(config_value(config, 'windows.max_seconds', 5.0))
     def category(w):
         return bool(w.get('speaker_other')), bool(w.get('target_offscreen'))
-    index = 0
-    while index < len(rows):
-        if rows[index]['t1']-rows[index]['t0'] >= minimum:
-            index += 1
-            continue
-        neighbours = [j for j in (index-1,index+1) if 0 <= j < len(rows) and category(rows[j]) == category(rows[index])]
-        if not neighbours:
-            index += 1
-            continue
-        # Prefer a result within max_window, then the closest earlier window.
-        other = min(neighbours, key=lambda j: (max(rows[j]['t1'],rows[index]['t1'])-min(rows[j]['t0'],rows[index]['t0']) > maximum, abs(j-index), j))
-        a,b = sorted((index,other))
-        left,right = rows[a],rows[b]
-        duration_left, duration_right = left['t1']-left['t0'],right['t1']-right['t0']
-        left['t1'] = right['t1']
-        for field in ('subtitle','subtitle_translation'):
-            left[field] = ' '.join(v for v in (left.get(field,''),right.get(field,'')) if v)
-        if left.get('target_presence_ratio') is not None and right.get('target_presence_ratio') is not None:
-            left['target_presence_ratio'] = (duration_left*left['target_presence_ratio']+duration_right*right['target_presence_ratio'])/(duration_left+duration_right)
-        rows.pop(b)
-        index = max(0,a-1)
+    groups: list[list[dict[str, Any]]] = []
+    for window in windows:
+        blocked = bool(groups and any(float(groups[-1][-1]['t1']) <= edge <= float(window['t0']) for edge in (boundaries or [])))
+        if not groups or category(groups[-1][-1]) != category(window) or blocked:
+            groups.append([])
+        groups[-1].append(dict(window))
+    rows = []
+    for group in groups:
+        # Minimize short results, then excessive spans, then merge count.
+        # This avoids greedily creating a six-second window when two
+        # consecutive three-second windows can retain the same cue text.
+        costs = [(0,0,0.,0)] + [None]*len(group)
+        parents = [0]*(len(group)+1)
+        for end in range(1,len(group)+1):
+            for start in range(end-1,-1,-1):
+                duration = float(group[end-1]['t1'])-float(group[start]['t0'])
+                penalty = (int(duration < minimum),int(duration > maximum),max(0.,duration-maximum),end-start-1)
+                candidate = tuple(x+y for x,y in zip(costs[start],penalty))
+                if costs[end] is None or candidate < costs[end]:
+                    costs[end],parents[end] = candidate,start
+        spans = [];end = len(group)
+        while end:
+            start = parents[end];spans.append((start,end));end = start
+        for start,end in reversed(spans):
+            pieces = group[start:end]
+            row = dict(pieces[0]);row['t1'] = pieces[-1]['t1']
+            for field in ('subtitle','subtitle_translation'):
+                row[field] = ' '.join(str(w.get(field,'')) for w in pieces if w.get(field,''))
+            if all(w.get('target_presence_ratio') is not None for w in pieces):
+                durations = [float(w['t1'])-float(w['t0']) for w in pieces]
+                row['target_presence_ratio'] = sum(d*w['target_presence_ratio'] for d,w in zip(durations,pieces))/sum(durations)
+            rows.append(row)
     for index,row in enumerate(rows):
         row.update(id=f'W{index:02d}', index=index, prev_subtitle=rows[index-1]['subtitle'] if index else '')
         row['hold_previous_panel'] = bool(index and any(category(row)) and row['t1']-row['t0'] < float(config_value(config,'windows.panel_hold_seconds',1.0)))

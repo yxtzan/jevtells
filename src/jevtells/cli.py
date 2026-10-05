@@ -403,7 +403,8 @@ def main() -> None:
     from .stages.speakers import split_speaker_changes
     marked = split_speaker_changes(marked, intervals, transcript, config)
     marked = mark_windows(marked, intervals, float(config.get("other_speaker_overlap", 0.5)))
-    marked = segment.merge_short_windows(marked, config)
+    presence_edges = [float(b['t0']) for a,b in zip(shot_list,shot_list[1:]) if (a.get('label') == 'target') != (b.get('label') == 'target')]
+    marked = segment.merge_short_windows(marked, config, boundaries=[*[t for interval in intervals for t in interval],*presence_edges])
     others_changed = marked != previous_windows
     if marked != windows:
         windows = marked

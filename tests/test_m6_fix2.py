@@ -137,3 +137,18 @@ def test_zoom_strip_subpixel_start_renders_without_zero_size_resize():
                        config=cfg,shots=shots,reframe_plan=plan)
     image = painter.frame(Image.new('RGB',(1280,720)),2+1/30,61)
     assert image.size == (1080,1440)
+
+
+def test_merging_avoids_long_span_when_original_cues_allow_two_windows():
+    from jevtells.stages.segment import merge_short_windows
+    cues = [{'t0':a,'t1':b,'subtitle':text} for a,b,text in [(0,1.5,'甲'),(1.5,2.8,'乙'),(2.8,4.4,'丙'),(4.4,6.1,'丁')]]
+    result = merge_short_windows(cues,{})
+    assert len(result) == 2
+    assert all(2 <= w['t1']-w['t0'] <= 5 for w in result)
+    assert ''.join(w['subtitle'].replace(' ','') for w in result) == '甲乙丙丁'
+
+
+def test_merge_cannot_cross_speaker_gap_without_caption():
+    from jevtells.stages.segment import merge_short_windows
+    rows = [{'t0':0,'t1':.5,'subtitle':'前'}, {'t0':1.5,'t1':3.5,'subtitle':'后'}]
+    assert len(merge_short_windows(rows,{},boundaries=[.7,1.2])) == 2

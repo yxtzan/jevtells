@@ -18,7 +18,7 @@ def _parse_srt(path: Path) -> dict[str, Any]:
         start = int(match.group(1)) * 3600 + int(match.group(2)) * 60 + int(match.group(3)) + int(match.group(4)) / 1000
         end = int(match.group(5)) * 3600 + int(match.group(6)) * 60 + int(match.group(7)) + int(match.group(8)) / 1000
         segments.append({"t0": start, "t1": end, "text": match.group(9).strip().replace("\n", " "), "words": []})
-    return {"language": "unknown", "segments": segments}
+    return {"language": "unknown", "segments": segments, "subtitle_source": "srt"}
 
 
 def run(wav: Path, out: Path, srt: str | None = None, force: bool = False, model_name: str = "small", destination_name: str = "transcript.json") -> dict[str, Any]:
