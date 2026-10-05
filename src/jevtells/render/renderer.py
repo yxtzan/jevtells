@@ -25,6 +25,7 @@ from .geometry import Layout
 from .labels import schedule
 from .panels import Panels, opacity
 from .text import Fonts, draw_fitted
+from .body_zones import body_zones
 from .placement import card_side, leader, select_positions
 from .reframe import crop_at, detect_subtitles, plan_crops
 
@@ -90,8 +91,9 @@ class Composer:
     def place(self, shot: Mapping[str, Any]) -> dict[str, Any]:
         start = round(float(shot["t0"])*float(self.points.get("fps",30)))
         end = round(float(shot["t1"])*float(self.points.get("fps",30)))
-        if shot.get("target_box") and not shot.get("far"):
-            x0,y0,x1,y1=shot["target_box"]
+        cores = body_zones(np.asarray(self.points["pose"])[start:end], self.layout.source, self.visibility)
+        if cores.get("torso") and not shot.get("far"):
+            x0,y0,x1,y1=cores["torso"]
             box=self.layout.source_rect((x0,y0,x1-x0,y1-y0))
             vx,vy,vw,vh=self.layout.video
             margin=self.layout.px(self.settings["layout"]["safe_margin"]+self.settings["layout"]["stack_gap"])
@@ -117,10 +119,20 @@ class Composer:
             median = np.median(xy,axis=0) if len(xy) else np.array([.5,.5])
             anchors[slot] = self.layout.source_point(median[0]*self.layout.source[0],median[1]*self.layout.source[1])
         zones = self.forbidden(float(shot["t1"])-1e-9)
-        target = next((zone["rect"] for zone in zones if zone["name"]=="target"),None)
+        zones = [zone for zone in zones if zone["name"] not in {"face", "torso"}]
+        protected = []
+        soft = []
+        for name, (x0,y0,x1,y1) in cores.items():
+            rect = list(self.layout.source_rect((x0,y0,x1-x0,y1-y0)))
+            if name == "hands":
+                soft.append(rect)
+            else:
+                zones.append({"name": name, "rect": rect})
+                protected.append(rect)
+        target = next((zone["rect"] for zone in zones if zone["name"]=="torso"),None)
         vx,vy,vw,vh=self.layout.video
         cfg=self.settings.get("layout",{})
-        result=select_positions(self.layout.rect((vx,vy,vw,vh)),target,[zone["rect"] for zone in zones],sizes,anchors,{slot:self.layout.point(*self.p["label_slots"][i]) for i,slot in enumerate(("left","right"))},margin=self.layout.px(cfg.get("safe_margin",24)),gap=self.layout.px(cfg.get("stack_gap",12)),step=self.layout.px(cfg.get("candidate_step",12)),line_ratio=cfg.get("max_leader_ratio",.45))
+        result=select_positions(self.layout.rect((vx,vy,vw,vh)),target,[zone["rect"] for zone in zones],sizes,anchors,{slot:self.layout.point(*self.p["label_slots"][i]) for i,slot in enumerate(("left","right"))},margin=self.layout.px(cfg.get("safe_margin",24)),gap=self.layout.px(cfg.get("stack_gap",12)),step=self.layout.px(cfg.get("candidate_step",12)),line_ratio=cfg.get("max_leader_ratio",.45),soft=soft,protected=protected)
         return {"shot_index":shot["index"],"t0":shot["t0"],"t1":shot["t1"],"sizes":sizes,"anchors":anchors,"forbidden":zones,"card_side":self.card_sides.get(int(shot["index"])),**result}
 
     def card_x(self, seconds: float) -> float:
@@ -229,17 +241,17 @@ class Composer:
             ld.ellipse((anchor[0] - radius, anchor[1] - radius, anchor[0] + radius, anchor[1] + radius), fill=color, outline=self.c["ink"], width=max(1, self.layout.px(label["point_outline"])))
             image.alpha_composite(leader)
             image.alpha_composite(opacity(sprite, alpha), (x, y))
-            self.audit["labels"].append({"slot": slot, "event": event["id"], "rect": [x, y, x + sprite.width, y + sprite.height], "fallback": bool(not placement or slot in placement.get("fallback_slots",[]))})
+            self.audit["labels"].append({"slot": slot, "event": event["id"], "rect": [x, y, x + sprite.width, y + sprite.height], "leader": [list(start),list(elbow),list(anchor)], "fallback": bool(not placement or slot in placement.get("fallback_slots",[]))})
 
     def forbidden(self, seconds: float) -> list[dict[str, Any]]:
         zones = []
         vx, vy, vw, vh = self.layout.video
         def zone(name: str, rect: Sequence[float]) -> None:
             zones.append({"name": name, "rect": list(self.layout.rect(rect))})
-        for shot in self.shots:
-            if float(shot["t0"]) <= seconds < float(shot["t1"]) and shot.get("target_box"):
-                x0, y0, x1, y1 = shot["target_box"]
-                zones.append({"name": "target", "rect": list(self.layout.source_rect((x0, y0, x1-x0, y1-y0)))})
+        index = min(len(self.points["pose"])-1, max(0, round(seconds*float(self.points.get("fps",30)))))
+        for name, (x0,y0,x1,y1) in body_zones(np.asarray(self.points["pose"])[index], self.layout.source, self.visibility).items():
+            if name != "hands":
+                zones.append({"name": name, "rect": list(self.layout.source_rect((x0,y0,x1-x0,y1-y0)))})
         ratio = self.settings["subtitle_exclusion_ratio"]
         zone("subtitles", (vx, vy + vh * (1-ratio), vw, vh * ratio))
         for rect in self.blur:
@@ -317,6 +329,7 @@ class Composer:
         if self.reframe_plan.get("enabled"):
             self.layout=replace(self.layout,crop=crop_at(self.reframe_plan,seconds))
         self.audit = {"seconds": seconds, "output": list(self.layout.output), "labels": [], "forbidden": self.forbidden(seconds)}
+        self.audit["leader_zones"] = [zone for zone in self.audit["forbidden"] if zone["name"] in {"face", "torso"}]
         source = blur_frame(source, self.blur, self.layout.source, self.settings["blur_radius"])
         if self.layout.crop:
             cx,cy,cw,ch=self.layout.crop

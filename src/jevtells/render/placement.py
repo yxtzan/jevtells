@@ -5,7 +5,7 @@ import math
 from itertools import product
 from typing import Any, Mapping, Sequence
 
-from .layout_audit import intersects
+from .layout_audit import intersects, segment_intersects_rect
 
 
 def card_side(target: Sequence[float] | None, width: float, card_width: float, margin: float) -> str:
@@ -30,7 +30,7 @@ def leader(rect: Sequence[float], anchor: Sequence[float], fraction: float = .35
     return [start, (start[0]+(anchor[0]-start[0])*fraction,start[1]), tuple(anchor)]
 
 
-def select_positions(video: Sequence[float], target: Sequence[float] | None, forbidden: Sequence[Sequence[float]], sizes: Mapping[str, Sequence[float]], anchors: Mapping[str, Sequence[float]], fallback: Mapping[str, Sequence[float]], *, margin: float = 24, gap: float = 12, step: float = 12, line_ratio: float = .45) -> dict[str, Any]:
+def select_positions(video: Sequence[float], target: Sequence[float] | None, forbidden: Sequence[Sequence[float]], sizes: Mapping[str, Sequence[float]], anchors: Mapping[str, Sequence[float]], fallback: Mapping[str, Sequence[float]], *, margin: float = 24, gap: float = 12, step: float = 12, line_ratio: float = .45, soft: Sequence[Sequence[float]] = (), protected: Sequence[Sequence[float]] = ()) -> dict[str, Any]:
     left, top, right, bottom = video
     bounds = target or (left+(right-left)/2, top, left+(right-left)/2, bottom)
     choices: dict[str, list[dict[str, Any]]] = {}
@@ -43,7 +43,7 @@ def select_positions(video: Sequence[float], target: Sequence[float] | None, for
         px = bounds[0]-gap-width if side == "left" else bounds[2]+gap
         py = max(top+margin, anchor[1]-height-gap)
         preferred[slot] = (px,py)
-        xs = {left+margin, right-margin-width, bounds[0]-gap-width, bounds[2]+gap}
+        xs = {max(left+margin,min(right-margin-width,anchor[0]-width/2)), left+margin, right-margin-width, bounds[0]-gap-width, bounds[2]+gap}
         ys = {top+margin,bottom-margin-height,py}
         for zone in forbidden:
             xs.update((zone[0]-gap-width, zone[2]+gap))
@@ -58,10 +58,14 @@ def select_positions(video: Sequence[float], target: Sequence[float] | None, for
             if any(intersects(rect, zone) for zone in forbidden):
                 continue
             path = leader(rect, anchor)
+            if any(segment_intersects_rect(a,b,zone) for a,b in zip(path,path[1:]) for zone in protected):
+                continue
+            candidate_side = "left" if (rect[0]+rect[2])/2 <= (bounds[0]+bounds[2])/2 else "right"
+            overlap = sum(max(0,min(rect[2],z[2])-max(rect[0],z[0]))*max(0,min(rect[3],z[3])-max(rect[1],z[1])) for z in soft)
             length = sum(math.dist(a,b) for a,b in zip(path,path[1:]))
             if length > (right-left)*line_ratio:
                 continue
-            candidates.append({"rect": rect, "position": [x,y], "score": math.dist((x,y),(px,py))+length, "leader": path})
+            candidates.append({"rect": rect, "position": [x,y], "score": math.dist((x,y),(px,py))+length+overlap/max(1,width*height)*(right-left)+(0 if candidate_side==side else 10*(right-left)), "leader": path})
         choices[slot] = sorted(candidates,key=lambda c:(c["score"],c["position"]))
     best = None
     # All candidates participate, so a low-ranked stacked position remains usable.
@@ -80,5 +84,9 @@ def select_positions(video: Sequence[float], target: Sequence[float] | None, for
         result.update({"positions": {"left": best[1]["position"], "right": best[2]["position"]}, "fallback": False, "reason": None})
     else:
         # SPEC explicitly keeps the legacy positions when no legal pair exists.
-        result.update({"positions": {slot: list(fallback[slot]) for slot in choices}, "fallback": True, "reason": "no noncrossing legal pair", "fallback_slots": ["left","right"]})
+        fixed = {}
+        for slot in choices:
+            side = "left" if anchors[slot][0] <= anchors["right" if slot == "left" else "left"][0] else "right"
+            fixed[slot] = list(fallback[side])
+        result.update({"positions": fixed, "fallback": True, "reason": "no noncrossing legal pair", "fallback_slots": ["left","right"]})
     return result

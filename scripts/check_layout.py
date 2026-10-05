@@ -9,7 +9,7 @@ from pathlib import Path
 import cv2
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from jevtells.render.layout_audit import frame_violations
+from jevtells.render.layout_audit import frame_violations, leader_violations
 
 
 def check(directory: Path, kind: str) -> dict:
@@ -19,7 +19,7 @@ def check(directory: Path, kind: str) -> dict:
     if not capture.isOpened():
         raise RuntimeError(f"cannot decode {video}")
     total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
-    result = {"layout": kind, "video": str(video), "frames": total, "checked_frames": 0, "visible_label_frames": 0, "violation_frames": 0, "nonfallback_violation_frames": 0, "fallback_frames": 0, "fallback_violation_frames": 0, "examples": []}
+    result = {"layout": kind, "video": str(video), "frames": total, "checked_frames": 0, "visible_label_frames": 0, "violation_frames": 0, "nonfallback_violation_frames": 0, "fallback_frames": 0, "fallback_violation_frames": 0, "examples": [], "leader_face_frames": 0, "leader_torso_frames": 0, "leader_examples": []}
     try:
         with trace.open() as handle:
             for index, line in enumerate(handle):
@@ -28,6 +28,11 @@ def check(directory: Path, kind: str) -> dict:
                 if not ok or frame["frame"] != index or tuple(frame["output"]) != (decoded.shape[1], decoded.shape[0]):
                     raise RuntimeError("composition trace does not match encoded frames")
                 failures = frame_violations(frame)
+                crossing = leader_violations(frame)
+                result["leader_face_frames"] += any(item["zone"] == "face" for item in crossing)
+                result["leader_torso_frames"] += any(item["zone"] == "torso" for item in crossing)
+                if crossing and len(result["leader_examples"]) < 30:
+                    result["leader_examples"].append({"frame":index,"seconds":frame["seconds"],"failures":crossing})
                 result["checked_frames"] += 1
                 result["visible_label_frames"] += bool(frame["labels"])
                 result["fallback_frames"] += any(label.get("fallback") for label in frame["labels"])
@@ -51,7 +56,7 @@ def main() -> None:
     results = [check(args.clip_dir, kind) for kind in (("h", "v") if args.layout == "both" else (args.layout,))]
     (args.clip_dir / "layout_check.json").write_text(json.dumps(results, ensure_ascii=False, indent=2))
     print(json.dumps(results, ensure_ascii=False, indent=2))
-    if any(result["violation_frames"] for result in results):
+    if any(result["violation_frames"] or result["leader_face_frames"] for result in results):
         raise SystemExit(1)
 
 
