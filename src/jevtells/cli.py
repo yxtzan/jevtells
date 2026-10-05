@@ -287,10 +287,11 @@ def main() -> None:
     intervals = parse_intervals(getattr(arguments, "others_speaking", []))
     blur_rectangles = parse_blurs(getattr(arguments, "blur", []))
     others_changed = False
+    subtitle_changed = False
 
     def force_stage(stage: str) -> bool:
         rerun_from = arguments.from_stage
-        return bool(arguments.force or (rerun_from and _STAGE_ORDER.index(stage) >= _STAGE_ORDER.index(rerun_from)) or (targets_changed and stage in _TARGET_STAGES) or (others_changed and stage in {"judge", "narrate", "render"}))
+        return bool(arguments.force or (rerun_from and _STAGE_ORDER.index(stage) >= _STAGE_ORDER.index(rerun_from)) or (targets_changed and stage in _TARGET_STAGES) or (others_changed and stage in {"judge", "narrate", "render"}) or (subtitle_changed and stage in {"segment", "actions", "scene", "state", "debug", "judge", "narrate", "render"}))
 
     started = time.perf_counter()
     stage_times: dict[str, float] = {}
@@ -363,6 +364,7 @@ def main() -> None:
     stage_start = time.perf_counter()
     # Acoustic words remain independent of the selected subtitle clock.
     from .stages import ocr
+    previous_transcript = json.loads((output / "transcript.json").read_text()) if (output / "transcript.json").exists() else None
     requested = getattr(arguments, "subtitle_source", "auto")
     detection = None
     if requested == "ocr" or (requested == "auto" and not arguments.srt and getattr(arguments, "subtitles", "on") == "off"):
@@ -378,6 +380,7 @@ def main() -> None:
     else:
         transcript = dict(audio_transcript)
     transcript["subtitle_source"] = source
+    subtitle_changed = transcript != previous_transcript
     (output / "transcript.json").write_text(json.dumps(transcript, ensure_ascii=False, indent=2))
     stage_times["asr"] = time.perf_counter() - stage_start
     if arguments.until == "asr":
@@ -396,7 +399,7 @@ def main() -> None:
     previous_windows = json.loads((output / "windows.json").read_text(encoding="utf-8")) if (output / "windows.json").exists() else None
     windows = _invoke(segment.run, transcript, shot_list, output, force_stage("segment"), config=config)
     from .stages.presence import split_presence_changes
-    marked = split_presence_changes(windows, shot_list, points, transcript)
+    marked = split_presence_changes(windows, shot_list, points, transcript, config)
     marked = mark_windows(marked, intervals, float(config.get("other_speaker_overlap", 0.5)))
     others_changed = marked != previous_windows
     if marked != windows:

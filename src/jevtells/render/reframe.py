@@ -99,8 +99,17 @@ def plan_crops(width: int, height: int, shots: Sequence[Mapping[str, Any]], poin
         return {"enabled":False,"shots":[]}
     fps=float(points.get("fps",30));pose=np.asarray(points.get("pose",[]),dtype=float)
     timeline=[]
+    group_multi = {}
+    group = 0
     for shot in shots:
-        if shot.get("multi_person"):
+        if shot.get('cut_at_start'):
+            group += 1
+        group_multi[group] = group_multi.get(group,False) or bool(shot.get('multi_person'))
+    group = 0
+    for shot in shots:
+        if shot.get('cut_at_start'):
+            group += 1
+        if group_multi[group]:
             timeline.append({"index":shot["index"],"t0":shot["t0"],"t1":shot["t1"],"left":0.,"width":width,"height":height,"pans":[],"multi_person":True})
             continue
         left=crop_left(width,height,shot.get("target_center_x"),subtitles,float(settings.get("max_offset",.08)))

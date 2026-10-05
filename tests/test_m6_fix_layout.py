@@ -43,6 +43,18 @@ def test_multibody_portrait_fits_full_frame_without_extra_subtitle_strip():
     assert p.layout.video==(0,251,1080,608)
 
 
+def test_portrait_framing_changes_only_at_hard_cut():
+    shots = [
+        {'index':1,'t0':0,'t1':1,'multi_person':True,'cut_at_start':False},
+        {'index':2,'t0':1,'t1':2,'multi_person':False,'cut_at_start':False},
+        {'index':3,'t0':2,'t1':3,'multi_person':False,'cut_at_start':True},
+    ]
+    plan = plan_crops(1280,720,shots,{'fps':30},None,load_config()['render']['reframe'])
+    assert plan['shots'][0]['multi_person'] and plan['shots'][1]['multi_person']
+    assert plan['shots'][0]['width'] == plan['shots'][1]['width'] == 1280
+    assert plan['shots'][2]['width'] < 1280
+
+
 def test_both_sides_face_collision_uses_mini_card_and_other_speech_collapses():
     p=painter();p.frame(Image.new('RGB',(1280,720)),.5,15)
     assert p.audit['cards'][0]['mode']=='mini'

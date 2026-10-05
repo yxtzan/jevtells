@@ -117,7 +117,7 @@ def run(
     if destination.exists() and not force:
         return json.loads(destination.read_text(encoding="utf-8"))
     if transcript is None:
-        transcript_path = out / "transcript.json"
+        transcript_path = out / ("transcript_asr.json" if (out / "transcript_asr.json").exists() else "transcript.json")
         if transcript_path.exists():
             transcript = json.loads(transcript_path.read_text(encoding="utf-8"))
     if actions is None:

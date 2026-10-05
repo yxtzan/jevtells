@@ -199,7 +199,8 @@ class Composer:
 
     def video_layout(self, seconds: float) -> Layout:
         shot = next((s for s in self.shots if float(s["t0"]) <= seconds < float(s["t1"])), self.shots[-1])
-        if shot.get("multi_person"):
+        planned = next((s for s in self.reframe_plan.get("shots",[]) if float(s["t0"])<=seconds<float(s["t1"])),shot)
+        if planned.get("multi_person"):
             return Layout.create(self.base_layout.kind, self.settings, self.base_layout.source)
         return Layout.create(self.base_layout.kind, self.settings, self.base_layout.source, crop_at(self.reframe_plan, seconds), strip_y=self.reframe_plan.get("strip_y") if self.reframe_plan.get("mode")=="strip" else None)
 
@@ -339,9 +340,10 @@ class Composer:
                 old_layer = Image.new('RGBA',common.size);old_layer.alpha_composite(old_sprite)
                 new_layer = Image.new('RGBA',common.size);new_layer.alpha_composite(sprite)
                 image.alpha_composite(opacity(Image.blend(old_layer,new_layer,amount),alpha),(x,y))
+                rect = [x,y,x+common.width,y+common.height]
             else:
                 image.alpha_composite(opacity(sprite, alpha), (x, y))
-            self.audit["labels"].append({"slot": slot, "event": event["id"], "rect": [x, y, x + sprite.width, y + sprite.height], "leader": [list(p) for p in path], "actual_hand_leader": [list(p) for p in real_path], "point": list(anchor), "point_clamped": anchor != projected_anchor, "relaxed": bool(placement and placement["selected"][slot]["relaxed"]), "forced": bool(placement and placement["selected"][slot]["forced"]), "fallback": False})
+            self.audit["labels"].append({"slot": slot, "event": event["id"], "rect": rect, "leader": [list(p) for p in path], "actual_hand_leader": [list(p) for p in real_path], "point": list(anchor), "point_clamped": anchor != projected_anchor, "relaxed": bool(placement and placement["selected"][slot]["relaxed"]), "forced": bool(placement and placement["selected"][slot]["forced"]), "fallback": False})
 
     def forbidden(self, seconds: float) -> list[dict[str, Any]]:
         zones = []
@@ -472,8 +474,11 @@ class Composer:
                     cx,cy,cw,ch=self.p["card"]
                     full = analysis.crop(self.layout.rect((cx,cy,cw,ch)))
                     height = self.layout.px(rect[3]+(ch-rect[3])*opened) if mode=="collapsed" else self.layout.px(self.settings["layout"]["compact_card_height"]+(ch-self.settings["layout"]["compact_card_height"])*opened)
+                    self.audit['cards'][0]['rect'] = list(self.layout.rect((rect[0],rect[1],rect[2],height/self.layout.scale)))
                     image.alpha_composite(opacity(full.resize((full.width,max(1,height))),opened),self.layout.point(rect[0],rect[1]))
-                    if compact is not None:image.alpha_composite(opacity(compact,1-opened))
+                    if compact is None:
+                        compact = self.compact_card(index-1 if index else index,'collapsed',(rect[0],rect[1],rect[2],self.settings['layout']['compact_card_height']))
+                    image.alpha_composite(opacity(compact,1-opened))
                 elif compact is not None:
                     image.alpha_composite(compact)
                 else:

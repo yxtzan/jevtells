@@ -181,6 +181,6 @@ def validation_errors(parsed: Mapping[str, Any], facts: Mapping[str, Any], previ
             if earlier and earlier[-1] and earlier[-1][1] == opening:
                 errors.append("two characters before 「 must differ in adjacent lines")
     subtitle = str(facts.get("subtitle", ""))
-    if not quote or quote not in subtitle or not 2 <= len(quote_tokens(quote)) <= 8:
+    if not (not quote and len(quote_tokens(subtitle)) < 2) and (not quote or quote not in subtitle or not 2 <= len(quote_tokens(quote)) <= 8):
         errors.append("quote must be an exact subtitle substring with 2–8 tokens")
     return errors

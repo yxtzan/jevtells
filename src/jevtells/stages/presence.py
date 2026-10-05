@@ -26,7 +26,7 @@ def mark_presence(windows: Sequence[Mapping[str, Any]], points: Mapping[str, Any
     return result
 
 
-def split_presence_changes(windows: Sequence[Mapping[str, Any]], shots: Sequence[Mapping[str, Any]], points: Mapping[str, Any], transcript: Mapping[str, Any]) -> list[dict[str, Any]]:
+def split_presence_changes(windows: Sequence[Mapping[str, Any]], shots: Sequence[Mapping[str, Any]], points: Mapping[str, Any], transcript: Mapping[str, Any], config: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
     """Keep short offscreen edits from disappearing into a long visible sentence.
 
     Only changes of target presence split an existing window. Ordinary cuts and
@@ -46,7 +46,8 @@ def split_presence_changes(windows: Sequence[Mapping[str, Any]], shots: Sequence
     result = []
     for window in windows:
         start, end = float(window['t0']), float(window['t1'])
-        edges = [start, *[t for t in boundaries if start < t < end], end]
+        tolerance = float((config or {}).get('windows',{}).get('split_boundary_tolerance_frames',.5))/float(points.get('fps',30))
+        edges = [start, *[t for t in boundaries if start+tolerance < t < end-tolerance], end]
         for a, b in zip(edges, edges[1:]):
             row = dict(window)
             row.update(t0=a, t1=b)

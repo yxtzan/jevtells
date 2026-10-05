@@ -21,6 +21,7 @@ clips:
       speaker: Jensen Huang
       target: ['1@0']
       subtitles: 'off'
+      subtitle_source: asr
     notes: Subject shifted left; card should remain right.
   - id: jensen_right
     input: samples/synthetic/jensen_right.mp4
@@ -29,6 +30,7 @@ clips:
       speaker: Jensen Huang
       target: ['1@0']
       subtitles: 'off'
+      subtitle_source: asr
     notes: Subject shifted right; illustrative holdout group only.
   - id: jensen_small
     input: samples/synthetic/jensen_small.mp4
@@ -37,6 +39,7 @@ clips:
       speaker: Jensen Huang
       target: ['1@0']
       subtitles: 'off'
+      subtitle_source: asr
     notes: Far framing; no gesture labels.
   - id: jensen_cut
     input: samples/synthetic/jensen_cut.mp4
@@ -45,6 +48,7 @@ clips:
       speaker: Jensen Huang
       target: ['1@0']
       subtitles: 'off'
+      subtitle_source: asr
     notes: Spatial cuts at 5 and 10 seconds; illustrative holdout group only.
   - id: tim_interview
     input: samples/tim_interview.mov
@@ -53,7 +57,7 @@ clips:
       duration: 52
       speaker: Tim
       target: ['1@0', '1@2', '1@4.1', '1@15.8', '1@25.6']
-      others_speaking: ['0-4.0', '10.16-15.24', '18.62-21.26', '24.04-25.24']
+      others_speaking: ['0-4.0333', '10.3-15.7333', '18.7667-21.2667', '24.1667-25.5667', '40.6-41.4667', '47.1-47.4667']
       blur: ['15,15,250,60']
       subtitles: 'off'
       title: 'AI 读 Tim'

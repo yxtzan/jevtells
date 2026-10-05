@@ -50,6 +50,7 @@ tracking:
   appearance_reference_stride: 3
 
 windows:
+  split_boundary_tolerance_frames: 0.5
   min_seconds: 2.0
   max_seconds: 5.0
 
@@ -424,5 +425,11 @@ ocr:
   background_value: 120
   background_ratio: 0.15
   pixel_tolerance: 1
-  word_gap_height_ratio: 0.30
+  word_gap_height_ratio: 0.26
   min_characters: 2
+  min_characters_zh: 1
+  unclip_ratio: 2.0
+  word_background_ratio: 0.50
+  word_colour_ratio: 0.30
+  word_text_value: 100
+  word_text_saturation: 50

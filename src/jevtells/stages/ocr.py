@@ -54,6 +54,12 @@ def restore_word_spaces(image: np.ndarray, rows: list, engine: Any, settings: Ma
             continue
         hsv = cv2.cvtColor(crop,cv2.COLOR_BGR2HSV)
         mask = (hsv[:,:,2]>=settings.get('text_value',180)) & ((hsv[:,:,1]<=settings.get('text_saturation',90)) | ((hsv[:,:,0]>=15)&(hsv[:,:,0]<=45)))
+        yellow = (hsv[:,:,2]>=settings.get('word_text_value',100)) & (hsv[:,:,1]>settings.get('word_text_saturation',50)) & (hsv[:,:,0]>=15) & (hsv[:,:,0]<=45)
+        if np.count_nonzero(yellow)>np.count_nonzero(mask)*float(settings.get('word_colour_ratio',.3)):
+            mask = yellow
+        dark_rows = (hsv[:,:,2] < settings.get('background_value',120)).mean(axis=1) >= float(settings.get('word_background_ratio',.5))
+        if not np.count_nonzero(yellow) and dark_rows.any():
+            mask &= dark_rows[:,None]
         columns = np.flatnonzero(mask.any(axis=0))
         if len(columns):
             gap = max(2, crop.shape[0]*float(settings.get('word_gap_height_ratio',.30)))
@@ -124,7 +130,7 @@ def run(clip: Path, out: Path, language: str, config: Mapping[str, Any], *, forc
     settings = config.get('ocr', {})
     destination = out / 'subtitles_ocr.srt'
     meta_path = out / 'subtitles_ocr.json'
-    signature = {'settings': dict(settings), 'language': language, 'version': 3}
+    signature = {'settings': dict(settings), 'language': language, 'version': 6}
     if destination.exists() and meta_path.exists() and not force and json.loads(meta_path.read_text()).get('signature') == signature:
         meta = json.loads(meta_path.read_text())
     else:
@@ -152,7 +158,7 @@ def run(clip: Path, out: Path, language: str, config: Mapping[str, Any], *, forc
                 if not ok:
                     raise RuntimeError('OCR sample decoding failed')
                 crop = frame[max(0,top-int(settings.get('crop_padding', 6))):]
-                rows, _ = engine(crop)
+                rows, _ = engine(crop, unclip_ratio=float(settings.get("unclip_ratio", 2.0)))
                 if not language.startswith('zh'):
                     rows = restore_word_spaces(crop,rows or [],engine,settings)
                 text, translation, confidence = select_lines(rows or [], language, float(settings.get('confidence', .80)))
@@ -161,7 +167,7 @@ def run(clip: Path, out: Path, language: str, config: Mapping[str, Any], *, forc
             text, votes = counts.most_common(1)[0] if counts else ('', 0)
             selected = [s for s in samples if s[0] == text]
             confidence = min((s[2] for s in selected), default=0.)
-            if len(re.findall(r'[A-Za-z0-9\u3400-\u9fff]', text)) < int(settings.get('min_characters', 2)) or votes < min(int(settings.get('min_votes', 2)), len(samples)) or confidence < float(settings.get('confidence', .80)):
+            if len(re.findall(r'[A-Za-z0-9\u3400-\u9fff]', text)) < int(settings.get('min_characters_zh', 1) if language.startswith('zh') else settings.get('min_characters', 2)) or votes < min(int(settings.get('min_votes', 2)), len(samples)) or confidence < float(settings.get('confidence', .80)):
                 rejected.append({'t0':start/fps,'t1':end/fps,'samples':samples,'reason':'low confidence or disagreement'})
                 continue
             translation = Counter(s[1] for s in selected).most_common(1)[0][0]

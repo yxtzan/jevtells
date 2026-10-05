@@ -78,3 +78,13 @@ def test_uncertain_choices_and_transitions_are_absent_from_facts():
     facts=build_facts(states,judgments,[{'id':'W0'},{'id':'W1'}],config=load_config())
     assert 'intent' not in facts['W1']['judgments'] and 'emotion' not in facts['W1']['judgments']
     assert facts['W1']['highlights']==[]
+
+
+def test_factual_fallback_survives_uncertain_emotion_without_highlights():
+    from jevtells.stages.narrate import _fallback
+    facts = {'subtitle': '好我觉得为什么这个我会回应啊',
+             'gestures': ['双手同时抬手（幅度大）'], 'highlights': [],
+             'judgments': {'intent': {'label': '提问'}}}
+    result = _fallback(facts, 'zh', [])
+    assert result['line'] == '双手同时抬手'
+    assert not validation_errors(result, facts, [], '', 'zh')
