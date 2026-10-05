@@ -160,7 +160,7 @@ def test_cli_cache_from_stage_and_language_do_not_repeat_unrelated_api_calls(tmp
         def chat(self, messages, model, **kwargs):
             stage = "scene" if kwargs.get("images") else "narrate"
             calls.append(stage)
-            text = "An indoor room with a fixed camera." if stage == "scene" else json.dumps({"line": "Words introduce the current point" if 'Write "line" in English' in messages[0]["content"] else "继续解释当前话题", "quote": "Hello world"}, ensure_ascii=False)
+            text = "An indoor room with a fixed camera." if stage == "scene" else json.dumps({"lines": [{"id": "W00", "line": "Words introduce the current point" if 'Write line in English' in messages[0]["content"] else "继续解释当前话题", "quote": "Hello world"}]}, ensure_ascii=False)
             return {"raw": {"choices": [{"message": {"content": text}}]}, "usage": {"prompt_tokens": 10, "completion_tokens": 7}, "cost": 0.002}
     for module in (judge, scene, narration_stage):
         monkeypatch.setattr(module, "OpenRouterClient", Client)

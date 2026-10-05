@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -87,10 +88,13 @@ def compute_highlights(judgments: Mapping[str, Any], windows: Sequence[Mapping[s
     tr = load_translations("zh")
     result: dict[str, list[str]] = {str(window["id"]): [] for window in windows}
     extrema: dict[str, tuple[float, float] | None] = {}
+    means: dict[str, float] = {}
     for key in SCORE_IDS:
         values = [score_value(judgments.get(str(w["id"])), key) for w in windows if not w.get("speaker_other")]
         values = [value for value in values if value is not None]
         extrema[key] = (min(values), max(values)) if len(values) >= min_extrema_windows else None
+        means[key] = sum(values) / len(values) if values else 0.0
+    extreme_candidates: list[tuple[float, str, str]] = []
     history: list[Mapping[str, Any]] = []
     previous: Mapping[str, Any] | None = None
     for window in windows:
@@ -110,9 +114,9 @@ def compute_highlights(judgments: Mapping[str, Any], windows: Sequence[Mapping[s
             limits = extrema[key]
             if limits and limits[1] - limits[0] > epsilon:
                 if abs(value - limits[1]) <= epsilon:
-                    highlights.append(f"{name} {value:.2f}，全场最高")
+                    extreme_candidates.append((abs(value - means[key]), identifier, f"{name} {value:.2f}，全场最高"))
                 elif abs(value - limits[0]) <= epsilon:
-                    highlights.append(f"{name} {value:.2f}，全场最低")
+                    extreme_candidates.append((abs(value - means[key]), identifier, f"{name} {value:.2f}，全场最低"))
             before = score_value(previous, key)
             if before is not None and abs(value - before) + epsilon >= delta_threshold:
                 highlights.append(f"{name}比上一句 {value - before:+.2f}")
@@ -132,6 +136,40 @@ def compute_highlights(judgments: Mapping[str, Any], windows: Sequence[Mapping[s
                 if old and new and old != new:
                     highlights.append(f"{label}由「{tr[category].get(old, old)}」转为「{tr[category].get(new, new)}」")
         previous = judgment
+    for _distance, identifier, text in sorted(extreme_candidates, key=lambda item: -item[0])[:math.ceil(len(windows) / 3)]:
+        result[identifier].insert(0, text)
+    return result
+
+
+def verbal_highlights(highlights: Sequence[str], lang: str = "zh") -> list[str]:
+    """Translate measured changes into number-free overlay wording."""
+    import re
+    tr = load_translations(lang)
+    words = tr["narration"]
+    zh = load_translations("zh")
+    result = []
+    for item in highlights:
+        name = next((value for value in zh["facts"]["scores"].values() if item.startswith(value)), "")
+        if lang == "en" and name:
+            key = next(key for key, value in zh["facts"]["scores"].items() if value == name)
+            name = tr["facts"]["scores"][key] + " "
+        delta = re.search(r"比上一句 ([+-][0-9.]+)", item)
+        if delta:
+            value = float(delta[1])
+            key = "delta_" + ("strong_" if abs(value) + 1e-9 >= .10 else "") + ("up" if value > 0 else "down")
+            result.append(name + words[key])
+        elif "全场最高" in item:
+            result.append(name + words["highest"])
+        elif "全场最低" in item:
+            result.append(name + words["lowest"])
+        elif "持续走" in item:
+            result.append(name + words["rising" if "走高" in item else "falling"])
+        elif "转为「" in item:
+            label = item.split("转为「", 1)[1].split("」", 1)[0]
+            category = "intents" if item.startswith("意图") else "emotions"
+            if lang == "en":
+                label = next((tr[category][key] for key, value in zh[category].items() if value == label), label)
+            result.append((item[:2] if lang == "zh" else ("Intent " if category == "intents" else "Emotion ")) + words["transition"].format(label=label))
     return result
 
 
@@ -139,6 +177,7 @@ def build_facts(states: Mapping[str, Any], judgments: Mapping[str, Any], windows
     highlights = compute_highlights(judgments, windows, config)
     tr = load_translations("zh")
     result: dict[str, Any] = {}
+    opening_index = 0
     for index, window in enumerate(windows, 1):
         identifier = str(window["id"])
         state = states[identifier]
@@ -158,7 +197,10 @@ def build_facts(states: Mapping[str, Any], judgments: Mapping[str, Any], windows
             "judgments": {"scores": {tr["facts"]["scores"][key]: score_value(judgment, key) for key in SCORE_IDS}, **choices},
             "highlights": highlights[identifier],
             "speaker_other": bool(window.get("speaker_other")),
+            "opening_style": ("动作开头 / movement", "引语开头 / quotation", "数据变化开头 / measured change", "声音开头 / voice")[opening_index % 4],
         }
+        if not window.get("speaker_other"):
+            opening_index += 1
     return result
 
 

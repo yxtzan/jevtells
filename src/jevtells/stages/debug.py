@@ -10,6 +10,7 @@ from typing import Any
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+from ..resources import asset_path
 
 
 POSE_EDGES = [(11, 12), (11, 13), (13, 15), (12, 14), (14, 16), (11, 23), (12, 24), (23, 24), (23, 25), (25, 27), (24, 26), (26, 28)]
@@ -17,7 +18,7 @@ POSE_EDGES = [(11, 12), (11, 13), (13, 15), (12, 14), (14, 16), (11, 23), (12, 2
 
 def _font() -> ImageFont.FreeTypeFont:
     """Load the downloaded Chinese font for overlay text."""
-    path = Path(__file__).resolve().parents[3] / "assets/fonts/NotoSansCJKsc-Regular.otf"
+    path = asset_path("assets/fonts/NotoSansCJKsc-Regular.otf")
     if path.exists():
         return ImageFont.truetype(str(path), 26)
     # Debug rendering remains useful on machines that did not download the

@@ -12,6 +12,7 @@ from ..clients.openrouter import OpenRouterClient
 from ..schemas import Judgment
 from .state import action_text
 from .speakers import other_ids
+from ..resources import data_path
 
 
 _SCORE_IDS = ("confidence", "focus", "tension")
@@ -19,7 +20,7 @@ _SCORE_LABELS = ("very_low", "low", "medium", "high", "very_high")
 
 
 def _questions_path() -> Path:
-    return Path(__file__).resolve().parents[3] / "config" / "jev_questions.yaml"
+    return data_path("config/jev_questions.yaml")
 
 
 def load_questions(path: str | Path | None = None) -> dict[str, dict[str, Any]]:

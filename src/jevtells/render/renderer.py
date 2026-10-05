@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import copy
+import fnmatch
 import json
+import re
 import subprocess
 import time
 from pathlib import Path
+from dataclasses import replace
 from typing import Any, Mapping, Sequence
 
 import cv2
@@ -16,11 +20,15 @@ from PIL import Image, ImageDraw, ImageFilter
 from ..actions.features import smooth_zero_phase
 from ..i18n import load_translations
 from ..stages.prepare import _ffmpeg
-from .animation import progress, window_at
+from .animation import commentary_at, ease_in_out_cubic, progress, window_at
 from .geometry import Layout
 from .labels import schedule
 from .panels import Panels, opacity
 from .text import Fonts, draw_fitted
+from .layout_audit import intersects, segment_intersects_rect
+from .body_zones import body_zones
+from .placement import card_side, leader, select_positions
+from .reframe import crop_at, detect_subtitles, plan_crops, subtitle_mode
 
 
 def blur_frame(frame: Image.Image, rectangles: Sequence[Sequence[float]], original: tuple[int, int], radius: float) -> Image.Image:
@@ -38,15 +46,19 @@ def blur_frame(frame: Image.Image, rectangles: Sequence[Sequence[float]], origin
 
 
 class Composer:
-    def __init__(self, settings: Mapping[str, Any], layout: Layout, windows: Sequence[Mapping[str, Any]], points: Mapping[str, Any], actions: Sequence[Mapping[str, Any]], judgments: Mapping[str, Any], narration: Mapping[str, Any], transcript: Mapping[str, Any], *, title: str, sources: str, lang: str, blur: Sequence[Sequence[float]], subtitles: bool, config: Mapping[str, Any]) -> None:
+    def __init__(self, settings: Mapping[str, Any], layout: Layout, windows: Sequence[Mapping[str, Any]], points: Mapping[str, Any], actions: Sequence[Mapping[str, Any]], judgments: Mapping[str, Any], narration: Mapping[str, Any], transcript: Mapping[str, Any], *, title: str, sources: str, lang: str, blur: Sequence[Sequence[float]], subtitles: bool, config: Mapping[str, Any], shots: Sequence[Mapping[str, Any]] = (), reframe_plan: Mapping[str, Any] | None = None) -> None:
         self.settings, self.layout, self.windows, self.points = settings, layout, windows, points
         self.events, self.judgments, self.transcript = actions, judgments, transcript
         self.blur, self.subtitles = blur, subtitles
+        self.shots = list(shots) or [{"index":1,"t0":0.,"t1":len(points.get("pose",[]))/float(points.get("fps",30)),"label":"target","far":False}]
+        self.reframe_plan = reframe_plan or {}
+        self.audit: dict[str, Any] = {}
         self.tr = load_translations(lang)
         self.fonts = Fonts(settings, layout.scale)
         self.panels = Panels(settings, layout, self.fonts, self.tr, windows, judgments, narration, title, sources)
         self.c, self.p = settings["colors"], settings[layout.kind]
-        self.label_cache: dict[tuple[str, str], Image.Image] = {}
+        self.label_cache: dict[tuple[str, str, float], Image.Image] = {}
+        self.label_limits: dict[str, float] = {}
         self.subtitle_cache: dict[str, Image.Image] = {}
         self.visibility = float(config.get("detection", {}).get("pose_visibility_threshold", 0.5))
         smoothing = config.get("smoothing", {})
@@ -54,6 +66,7 @@ class Composer:
         pose = np.asarray(points.get("pose", []), dtype=float)
         hands = np.asarray(points.get("hands", []), dtype=float)
         self.anchors: dict[str, np.ndarray] = {}
+        self.raw_anchors: dict[str, np.ndarray] = {}
         for slot, side in (("left", 1), ("right", 0)):
             wrist = int(settings["label"]["wrist_points"][side])
             xy = pose[:, wrist, :2].copy()
@@ -63,12 +76,129 @@ class Composer:
                 palm = hands[:, side, settings["label"]["palm_points"], :2]
                 valid = np.isfinite(palm).all(axis=(1, 2))
                 xy[valid] = palm[valid].mean(axis=1)
+            self.raw_anchors[slot] = xy.copy()
             self.anchors[slot] = smooth_zero_phase(xy, smooth_window, polynomial) if smoothing.get("enabled", True) else xy
         head = pose[:, int(settings["label"]["head_point"]), :2]
+        self.raw_anchors["head"] = head.copy()
         self.anchors["head"] = smooth_zero_phase(head, smooth_window, polynomial)
+        self.card_sides = {}
+        for shot in self.shots:
+            if layout.kind == "h":
+                start,end=(round(float(shot[k])*float(points.get("fps",30))) for k in ("t0","t1"))
+                core=body_zones(pose[start:end],layout.source,self.visibility).get("torso",shot.get("target_box"))
+                self.card_sides[int(shot["index"])] = card_side(core,layout.source[0],self.p["card"][2]*layout.source[0]/layout.video[2],self.layout.px(settings.get("layout",{}).get("safe_margin",24))/layout.scale*layout.source[0]/layout.video[2])
+        self.placements: dict[int, dict[str, Any]] = {}
+        for shot in self.shots:
+            if self.reframe_plan.get("enabled"):
+                self.layout=replace(self.layout,crop=crop_at(self.reframe_plan,float(shot["t0"])))
+            self.placements[int(shot["index"])] = self.place(shot)
+        self.layout=layout
+
+    def place(self, shot: Mapping[str, Any]) -> dict[str, Any]:
+        start = round(float(shot["t0"])*float(self.points.get("fps",30)))
+        end = round(float(shot["t1"])*float(self.points.get("fps",30)))
+        cores = body_zones(np.asarray(self.points["pose"])[start:end], self.layout.source, self.visibility)
+        if cores.get("torso") and not shot.get("far"):
+            x0,y0,x1,y1=cores["torso"]
+            box=self.layout.source_rect((x0,y0,x1-x0,y1-y0))
+            vx,vy,vw,vh=self.layout.video
+            margin=self.layout.px(self.settings["layout"]["safe_margin"]+self.settings["layout"]["stack_gap"])
+            available=sorted({min(self.p["label_width"],space/self.layout.scale) for space in (box[0]-self.layout.px(vx)-margin,self.layout.px(vx+vw)-box[2]-margin) if space>0})
+            for event in self.events:
+                mid=(float(event["t0"])+float(event["t1"]))/2
+                if not float(shot["t0"])<=mid<float(shot["t1"]) or event.get("far"):
+                    continue
+                for width in available:
+                    self.label_limits[str(event["id"])]=width
+                    try:
+                        self.label_sprite(event,"left")
+                        self.label_sprite(event,"right")
+                        break
+                    except ValueError:
+                        self.label_limits.pop(str(event["id"]),None)
+        sizes, anchors = {}, {}
+        for slot in ("left", "right"):
+            sprites = [self.label_sprite(event,slot) for event in self.events if not event.get("far") and event.get("type") in self.settings["label_types"] and float(event["t0"]) < float(shot["t1"]) and float(event["t1"]) >= float(shot["t0"]) and (event.get("limb") == "both_hands" or (slot=="left") == (event.get("limb") in {"right_hand","head","body"}))]
+            sizes[slot] = [max((sprite.width for sprite in sprites),default=self.layout.px(self.p["label_width"])),max((sprite.height for sprite in sprites),default=self.layout.px(80))]
+            xy = self.anchors[slot][start:end]
+            xy = xy[np.isfinite(xy).all(axis=1)]
+            median = np.median(xy,axis=0) if len(xy) else np.array([.5,.5])
+            anchors[slot] = self.layout.source_point(median[0]*self.layout.source[0],median[1]*self.layout.source[1])
+        saved_layout = self.layout
+        samples = {slot: [] for slot in ("left", "right")}
+        hard_by_name = {}
+        frame_faces, frame_mids = [], []
+        fps = float(self.points.get("fps", 30))
+        for index in range(start, min(end, len(self.points["pose"]))):
+            seconds = index / fps
+            if self.reframe_plan.get("enabled"):
+                self.layout = replace(saved_layout, crop=crop_at(self.reframe_plan, seconds))
+            frame_core = body_zones(np.asarray(self.points["pose"])[index], self.layout.source, self.visibility)
+            face = frame_core.get("face_raw")
+            face = list(self.layout.source_rect((face[0],face[1],face[2]-face[0],face[3]-face[1]))) if face else None
+            mid = self.layout.source_point(frame_core.get("midline", self.layout.source[0]/2), 0)[0]
+            wi, _ = window_at(self.windows, seconds)
+            lost = not np.isfinite(np.asarray(self.points["pose"])[index,:,:2]).any()
+            if "target_index" in self.points: lost |= int(self.points["target_index"][index]) < 0
+            shot_label = str(self.windows[wi].get("shot", "target")) if wi is not None else "target"
+            has_label = False
+            for slot, (event, alpha, zoom) in schedule(self.events,seconds,self.settings,lost=lost,shot=shot_label).items():
+                if shot.get("far") or shot.get("label")=="other" or (event.get("shot_index") is not None and event["shot_index"]!=shot["index"]):
+                    continue
+                anchor_slot="head" if event.get("limb") in {"head","body"} else slot
+                xy=self.raw_anchors[anchor_slot][index]
+                if not np.isfinite(xy).all():xy=self.anchors[anchor_slot][index]
+                if not np.isfinite(xy).all():continue
+                sprite=self.label_sprite(event,slot)
+                has_label = True
+                samples[slot].append({"anchor":self.layout.source_point(xy[0]*self.layout.source[0],xy[1]*self.layout.source[1]),"face":face,"midline":mid,"size":sprite.size,"zoom":zoom,"offset":self.layout.px(self.p["label_size"]*self.settings["components"]["line_height"]+2*self.settings["label"]["padding"][1])/2})
+            if has_label:
+                if face: frame_faces.append(face)
+                frame_mids.append(mid)
+                zones_at = self.forbidden(seconds)
+                for zone_index, zone in enumerate(zones_at):
+                    name, rect = zone["name"], zone["rect"]
+                    if name == "edge": name += ":" + str(zone_index)
+                    if name not in hard_by_name:
+                        hard_by_name[name] = list(rect)
+                    else:
+                        old = hard_by_name[name]
+                        hard_by_name[name] = [min(old[0],rect[0]),min(old[1],rect[1]),max(old[2],rect[2]),max(old[3],rect[3])]
+        self.layout = saved_layout
+        zones=[{"name":name,"rect":rect} for name,rect in hard_by_name.items()]
+        soft=[]
+        for name in ("torso","hands"):
+            if name in cores:
+                x0,y0,x1,y1=cores[name]
+                soft.append(list(self.layout.source_rect((x0,y0,x1-x0,y1-y0))))
+        target = soft[0] if cores.get("torso") else None
+        for slot, values in samples.items():
+            if values:
+                anchors[slot]=list(np.median([v['anchor'] for v in values],axis=0))
+        midline=float(np.median(frame_mids)) if frame_mids else None
+        face=[min(f[0] for f in frame_faces),min(f[1] for f in frame_faces),max(f[2] for f in frame_faces),max(f[3] for f in frame_faces)] if frame_faces else None
+        vx,vy,vw,vh=self.layout.video
+        cfg=self.settings.get("layout",{})
+        result=select_positions(self.layout.rect((vx,vy,vw,vh)),target,[zone["rect"] for zone in zones],sizes,anchors,margin=self.layout.px(cfg.get("safe_margin",24)),gap=self.layout.px(cfg.get("stack_gap",12)),step=self.layout.px(cfg.get("candidate_step",12)),soft=soft,samples=samples,midline=midline,face=face,exemption=self.layout.px(60),fraction=self.settings["label"]["leader_fraction"])
+        return {"shot_index":shot["index"],"t0":shot["t0"],"t1":shot["t1"],"sizes":sizes,"anchors":anchors,"sample_counts":{slot:len(v) for slot,v in samples.items()},"forbidden":zones,"card_side":self.card_sides.get(int(shot["index"])),**result}
+
+    def card_x(self, seconds: float) -> float:
+        default=self.p.get("card",[0])[0]
+        if self.layout.kind != "h" or not self.shots:
+            return default
+        index=next((i for i,shot in enumerate(self.shots) if float(shot["t0"])<=seconds<float(shot["t1"])),len(self.shots)-1)
+        def position(i: int) -> float:
+            return default if self.card_sides[int(self.shots[i]["index"])]=="right" else self.settings["layout"]["card_left_x"]
+        current=position(index)
+        if not index:
+            return current
+        before=position(index-1)
+        amount=ease_in_out_cubic((seconds-float(self.shots[index]["t0"]))/self.settings["animation"]["card_seconds"])
+        return before+(current-before)*amount
 
     def label_sprite(self, event: Mapping[str, Any], slot: str) -> Image.Image:
-        cache_key = (str(event["id"]), slot)
+        available=self.label_limits.get(str(event["id"]),self.p["label_width"])
+        cache_key = (str(event["id"]), slot, available)
         if cache_key in self.label_cache:
             return self.label_cache[cache_key]
         label = self.settings["label"]
@@ -79,7 +209,7 @@ class Composer:
         if limb == "both_hands" and action.startswith(prefix):
             action = action[len(prefix):].strip()
         text = (prefix + " · " if prefix else "") + action
-        fit = self.fonts.fit(text, "sans_black", self.p["label_size"], self.p["label_width"] - 2 * label["padding"][0], 1)
+        fit = self.fonts.fit(text, "sans_black", self.p["label_size"], available - 2 * label["padding"][0], 1)
         px, py = (self.layout.px(v) for v in label["padding"])
         width = round(fit.font.getlength(text)) + 2 * px
         height = round(fit.size * g["line_height"]) + 2 * py
@@ -89,7 +219,7 @@ class Composer:
         probability = judgment.get("actions", {}).get(str(event["id"]))
         details.append(self.tr["ui"]["expressive"].format(value=f"{probability:.2f}" if isinstance(probability, (int, float)) else self.tr["ui"]["missing"]))
         badge_text = " · ".join(details)
-        badge_fit = self.fonts.fit(badge_text, "sans", self.p["badge_size"], self.p["label_width"] - 2 * label["badge_padding"][0] - label["badge_indent"], 1)
+        badge_fit = self.fonts.fit(badge_text, "sans", self.p["badge_size"], available - 2 * label["badge_padding"][0] - label["badge_indent"], 1)
         bx, by = (self.layout.px(v) for v in label["badge_padding"])
         badge_width = round(badge_fit.font.getlength(badge_text)) + 2 * bx
         badge_height = round(badge_fit.size * g["line_height"]) + 2 * by
@@ -110,36 +240,115 @@ class Composer:
         draw = ImageDraw.Draw(image)
         label = self.settings["label"]
         for slot, (event, alpha, zoom) in selected.items():
+            current_shot = next((value for value in self.shots if float(value["t0"]) <= seconds < float(value["t1"])),None)
+            if current_shot and (current_shot.get("far") or current_shot["label"]=="other"):
+                continue
+            if current_shot and event.get("shot_index") and event["shot_index"] != current_shot["index"]:
+                continue
             xy = self.anchors["head" if event.get("limb") in {"head", "body"} else slot][point_index]
             if not np.isfinite(xy).all():
                 continue
             anchor = self.layout.source_point(xy[0] * self.layout.source[0], xy[1] * self.layout.source[1])
-            vx, vy, vw, vh = self.layout.video
-            if not self.layout.px(vx) <= anchor[0] <= self.layout.px(vx + vw) or not self.layout.px(vy) <= anchor[1] <= self.layout.px(vy + vh):
-                continue
-            if anchor[1] >= self.layout.px(vy + vh * (1 - self.settings["subtitle_exclusion_ratio"])):
-                continue
-            if self.layout.kind == "h":
-                cx, cy, cw, ch = self.p["card"]
-                if self.layout.px(cx) <= anchor[0] <= self.layout.px(cx + cw) and self.layout.px(cy) <= anchor[1] <= self.layout.px(cy + ch):
-                    continue
+            projected_anchor = anchor
+            vx,vy,vw,vh=self.layout.video
+            radius=self.layout.px(label["point_radius"])+self.layout.px(label["point_outline"])
+            anchor=(max(self.layout.px(vx)+radius,min(self.layout.px(vx+vw)-radius,anchor[0])),max(self.layout.px(vy)+radius,min(self.layout.px(vy+vh)-radius,anchor[1])))
+            # Pose/shot eligibility controls visibility. Geometry only selects
+            # the shot position; it never suppresses a label or its connection.
+            self.audit.setdefault("expected_labels", []).append({"slot":slot,"event":event["id"]})
             sprite = self.label_sprite(event, slot)
             if zoom < 1:
                 sprite = sprite.resize((round(sprite.width * zoom), round(sprite.height * zoom)), Image.Resampling.LANCZOS)
-            x, y = self.layout.point(*self.p["label_slots"][0 if slot == "left" else 1])
+            placement = self.placements.get(current_shot["index"]) if current_shot else None
+            x, y = placement["positions"][slot] if placement else self.layout.point(*self.p["label_slots"][0 if slot == "left" else 1])
+            x,y=round(x),round(y)
             # Keep the fixed slot but cap its right edge for long English text.
             x = min(x, image.width - sprite.width)
             body_height = self.layout.px(self.p["label_size"] * self.settings["components"]["line_height"] + 2 * label["padding"][1])
-            start = (x + sprite.width if slot == "left" else x, y + round(body_height * zoom / 2))
+            start = (x + sprite.width if anchor[0] >= x+sprite.width/2 else x, y + round(body_height * zoom / 2))
             elbow = (round(start[0] + (anchor[0] - start[0]) * label["leader_fraction"]), start[1])
+            rect=[x,y,x+sprite.width,y+sprite.height]
+            raw_xy=self.raw_anchors["head" if event.get("limb") in {"head","body"} else slot][point_index]
+            real_anchor=self.layout.source_point(raw_xy[0]*self.layout.source[0],raw_xy[1]*self.layout.source[1]) if np.isfinite(raw_xy).all() else anchor
+            real_start=(x+sprite.width if real_anchor[0]>=x+sprite.width/2 else x,start[1])
+            real_elbow=(round(real_start[0]+(real_anchor[0]-real_start[0])*label["leader_fraction"]),real_start[1])
+            path=[start,elbow,anchor]
+            real_path=[real_start,real_elbow,real_anchor]
             color = (*tuple(int(self.c["lime"][i:i+2], 16) for i in (1, 3, 5)), round(255 * alpha))
             leader = Image.new("RGBA", image.size)
             ld = ImageDraw.Draw(leader)
-            ld.line([start, elbow, anchor], fill=color, width=max(1, self.layout.px(label["leader_width"])), joint="curve")
+            ld.line(path, fill=color, width=max(1, self.layout.px(label["leader_width"])), joint="curve")
             radius = self.layout.px(label["point_radius"])
             ld.ellipse((anchor[0] - radius, anchor[1] - radius, anchor[0] + radius, anchor[1] + radius), fill=color, outline=self.c["ink"], width=max(1, self.layout.px(label["point_outline"])))
             image.alpha_composite(leader)
             image.alpha_composite(opacity(sprite, alpha), (x, y))
+            self.audit["labels"].append({"slot": slot, "event": event["id"], "rect": [x, y, x + sprite.width, y + sprite.height], "leader": [list(p) for p in path], "actual_hand_leader": [list(p) for p in real_path], "point": list(anchor), "point_clamped": anchor != projected_anchor, "relaxed": bool(placement and placement["selected"][slot]["relaxed"]), "forced": bool(placement and placement["selected"][slot]["forced"]), "fallback": False})
+
+    def forbidden(self, seconds: float) -> list[dict[str, Any]]:
+        zones = []
+        vx, vy, vw, vh = self.layout.video
+        def zone(name: str, rect: Sequence[float]) -> None:
+            zones.append({"name": name, "rect": list(self.layout.rect(rect))})
+        index = min(len(self.points["pose"])-1, max(0, round(seconds*float(self.points.get("fps",30)))))
+        for name, value in body_zones(np.asarray(self.points["pose"])[index], self.layout.source, self.visibility).items():
+            if name == "face":
+                x0,y0,x1,y1=value
+                zones.append({"name": name, "rect": list(self.layout.source_rect((x0,y0,x1-x0,y1-y0)))})
+        ratio = self.settings["subtitle_exclusion_ratio"]
+        if self.layout.strip_video:
+            zone("subtitle_strip", self.layout.strip_video)
+        else:
+            zone("subtitles", (vx, vy + vh * (1-ratio), vw, vh * ratio))
+        for rect in self.blur:
+            zones.append({"name": "blur", "rect": list(self.layout.source_rect(rect))})
+        margin = float(self.settings.get("layout", {}).get("safe_margin", 24))
+        for rect in ((vx,vy,vw,margin),(vx,vy,margin,vh),(vx+vw-margin,vy,margin,vh),(vx,vy+vh-margin,vw,margin)):
+            zone("edge", rect)
+        if self.layout.kind == "h":
+            cx,cy,cw,ch=self.p["card"]
+            zone("card",(self.card_x(seconds),cy,cw,ch))
+            zone("commentary",self.p["commentary"])
+            # Use the capsule's actual bounds rather than its maximum text slot.
+            wi,_gap=window_at(self.windows,seconds)
+            status,position=self.panels.status(wi,round(seconds*10),False)
+            shift=self.p["card"][0]-self.card_x(seconds)
+            zones.append({"name":"status","rect":[position[0]+self.layout.px(shift),position[1],position[0]+self.layout.px(shift)+status.width,position[1]+status.height]})
+            zone("quote", (self.p["commentary"][0],self.p["quote_y"],self.p["commentary"][2],self.p["quote_size"]*self.settings["components"]["line_height"]+2*self.p["quote_padding"][1]))
+        return zones
+
+    def debug_layout(self, clip: Path, out: Path) -> None:
+        directory = out / "layout_debug"
+        directory.mkdir(exist_ok=True)
+        capture = cv2.VideoCapture(str(clip))
+        try:
+            for shot in self.shots:
+                seconds = (float(shot["t0"]) + float(shot["t1"])) / 2
+                capture.set(cv2.CAP_PROP_POS_MSEC, seconds * 1000)
+                ok, frame = capture.read()
+                if not ok:
+                    raise RuntimeError("cannot decode layout debug midpoint")
+                index = min(len(self.points["pose"])-1, round(seconds * float(self.points.get("fps", 30))))
+                image = self.frame(Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)), seconds, index)
+                draw = ImageDraw.Draw(image)
+                font = self.fonts.font("mono", 12)
+                for zone in self.audit["forbidden"]:
+                    draw.rectangle(zone["rect"], outline="red", width=2)
+                    draw.text(tuple(zone["rect"][:2]), zone["name"], fill="red", font=font)
+                for position in self.p["label_slots"]:
+                    x, y = self.layout.point(*position)
+                    draw.rectangle((x,y,x+self.layout.px(self.p["label_width"]),y+self.layout.px(80)),outline="#4C82FF",width=2)
+                placement=self.placements[int(shot["index"])]
+                for values in placement["candidates"].values():
+                    for candidate in values[:24]:
+                        draw.rectangle(candidate["rect"],outline="#4C82FF",width=1)
+                for slot,position in placement["positions"].items():
+                    x,y=position;w,h=placement["sizes"][slot]
+                    draw.rectangle((x,y,x+w,y+h),outline="#C8FF2E",width=3)
+                for label in self.audit["labels"]:
+                    draw.rectangle(label["rect"], outline="#C8FF2E", width=3)
+                image.save(directory / f"{self.layout.kind}_shot_{shot['index']:03d}.png")
+        finally:
+            capture.release()
 
     def _subtitles(self, image: Image.Image, seconds: float) -> None:
         if any("subtitle" in window for window in self.windows):
@@ -162,24 +371,41 @@ class Composer:
         image.alpha_composite(layer, (self.layout.px(vx + vw / 2) - layer.width // 2, self.layout.px(vy + vh - cfg["bottom"]) - layer.height))
 
     def frame(self, source: Image.Image, seconds: float, point_index: int) -> Image.Image:
+        if self.reframe_plan.get("enabled"):
+            self.layout=replace(self.layout,crop=crop_at(self.reframe_plan,seconds))
+        self.audit = {"seconds": seconds, "output": list(self.layout.output), "labels": [], "forbidden": self.forbidden(seconds)}
+        cores = body_zones(np.asarray(self.points["pose"])[point_index], self.layout.source, self.visibility)
+        face = cores.get("face_raw")
+        self.audit["leader_zones"] = [{"name":"face","rect":list(self.layout.source_rect((face[0],face[1],face[2]-face[0],face[3]-face[1])))}] if face else []
+        self.audit["midline"] = self.layout.source_point(cores["midline"],0)[0] if "midline" in cores else None
+        self.audit["endpoint_exemption"] = self.layout.px(60)
         source = blur_frame(source, self.blur, self.layout.source, self.settings["blur_radius"])
+        original_source=source
+        if self.layout.crop:
+            cx,cy,cw,ch=self.layout.crop
+            sx,sy=source.width/self.layout.source[0],source.height/self.layout.source[1]
+            source=source.crop((round(cx*sx),round(cy*sy),round((cx+cw)*sx),round((cy+ch)*sy)))
         x, y, width, height = self.layout.video
         image = Image.new("RGBA", self.layout.output, self.c["ink"])
         image.paste(source.resize((self.layout.px(width), self.layout.px(height)), Image.Resampling.BICUBIC), self.layout.point(x, y))
+        if self.layout.strip_video and self.layout.strip_y is not None:
+            sy=original_source.height/self.layout.source[1]
+            strip=original_source.crop((0,round(self.layout.strip_y*sy),original_source.width,original_source.height))
+            sx,sy,sw,sh=self.layout.strip_video
+            image.paste(strip.resize((self.layout.px(sw),self.layout.px(sh)),Image.Resampling.BICUBIC),self.layout.point(sx,sy))
         image.alpha_composite(self.panels.base)
         index, gap = window_at(self.windows, seconds)
         attenuation = self.settings["gap_opacity"] if gap else 1.0
         if index is not None:
             elapsed = seconds - float(self.windows[index]["t0"])
-            image.alpha_composite(opacity(self.panels.analysis(index, elapsed), attenuation))
-            image.alpha_composite(opacity(self.panels.quote(index), attenuation))
+            analysis=opacity(self.panels.analysis(index, elapsed), attenuation)
+            offset=self.layout.px(self.card_x(seconds)-self.p["card"][0]) if self.layout.kind=="h" else 0
+            image.alpha_composite(analysis,(offset,0))
             animation = self.settings["animation"]
-            if index and elapsed < animation["commentary_out_seconds"]:
-                previous, pos = self.panels.commentary(index - 1)
-                image.alpha_composite(opacity(previous, attenuation * (1 - elapsed / animation["commentary_out_seconds"])), pos)
-            layer, position = self.panels.commentary(index)
-            amount = progress(elapsed, animation["commentary_in_seconds"])
-            position = (position[0], position[1] + self.layout.px(animation["commentary_offset"] * (1 - amount)))
+            sentence, amount, offset = commentary_at(index, elapsed, animation)
+            image.alpha_composite(opacity(self.panels.quote(sentence), amount * attenuation))
+            layer, position = self.panels.commentary(sentence)
+            position = (position[0], position[1] + self.layout.px(offset))
             image.alpha_composite(opacity(layer, amount * attenuation), position)
         else:
             layer, position = self.panels.commentary(None)
@@ -193,8 +419,17 @@ class Composer:
         if self.subtitles:
             self._subtitles(image, seconds)
         status, position = self.panels.status(index, round(seconds * 10), lost)
+        if self.layout.kind == "h":
+            position=(position[0]+self.layout.px(self.p["card"][0]-self.card_x(seconds)),position[1])
         image.alpha_composite(status, position)
         return image.convert("RGB")
+
+
+def model_short_name(identifier: str, settings: Mapping[str, Any]) -> str:
+    for pattern, name in settings.get("model_names", {}).items():
+        if fnmatch.fnmatchcase(identifier, pattern):
+            return str(name)
+    return re.sub(r"-(?:\d{8}|\d{4}-\d{2}-\d{2})$", "", identifier.split("/")[-1])
 
 
 def _sources(out: Path, settings: Mapping[str, Any], config: Mapping[str, Any], lang: str) -> str:
@@ -206,14 +441,17 @@ def _sources(out: Path, settings: Mapping[str, Any], config: Mapping[str, Any], 
         for raw_path in sorted((out / "raw").glob(f"{prefix}_W*.json")):
             raw = json.loads(raw_path.read_text(encoding="utf-8"))
             if raw.get("model"):
-                return str(raw["model"]).split("/")[-1]
-        return str(value.get("model", fallback)).split("/")[-1]
+                return model_short_name(str(raw["model"]), settings)
+        return model_short_name(str(value.get("model", fallback)), settings)
     return " · ".join((tr["action_source"], tr["judge_source"].format(model=model("judge_meta.json", str(config["jev"]["model"]))), tr["narrate_source"].format(model=model("narrate_meta.json", str(config["narrate"]["model"]))), tr["disclaimer"]))
 
 
 def _signature(out: Path, values: Mapping[str, Any]) -> str:
     digest = hashlib.sha256(json.dumps(values, sort_keys=True, ensure_ascii=False).encode())
-    for name in ("clip.mp4", "windows.json", "keypoints.npz", "actions.json", "judgments.json", "narration.json", "transcript.json", "judge_meta.json", "narrate_meta.json"):
+    for path in sorted(Path(__file__).parent.rglob("*.py")):
+        digest.update(str(path.relative_to(Path(__file__).parent)).encode())
+        digest.update(path.read_bytes())
+    for name in ("clip.mp4", "windows.json", "keypoints.npz", "actions.json", "judgments.json", "narration.json", "transcript.json", "judge_meta.json", "narrate_meta.json", "shots.json"):
         path = out / name
         if path.exists():
             with path.open("rb") as handle:
@@ -222,7 +460,7 @@ def _signature(out: Path, values: Mapping[str, Any]) -> str:
     return digest.hexdigest()
 
 
-def run(clip: Path, out: Path, windows: Sequence[Mapping[str, Any]], points: Mapping[str, Any], *, config: Mapping[str, Any], speaker: str, lang: str = "zh", title: str | None = None, layout: str = "both", blur: Sequence[Sequence[float]] = (), subtitles: bool = True, source_size: tuple[int, int] | None = None, force: bool = False) -> dict[str, Any]:
+def run(clip: Path, out: Path, windows: Sequence[Mapping[str, Any]], points: Mapping[str, Any], *, config: Mapping[str, Any], speaker: str, lang: str = "zh", title: str | None = None, layout: str = "both", blur: Sequence[Sequence[float]] = (), subtitles: bool = True, source_size: tuple[int, int] | None = None, force: bool = False, debug_layout: bool = False, reframe: str = "auto") -> dict[str, Any]:
     settings = config["render"]
     executable = _ffmpeg()
     available = subprocess.run([executable, "-hide_banner", "-encoders"], capture_output=True, text=True, check=True).stdout
@@ -240,9 +478,9 @@ def run(clip: Path, out: Path, windows: Sequence[Mapping[str, Any]], points: Map
     previous_meta = read("render_meta.json", {})
     results: dict[str, Any] = dict(previous_meta)
     for kind in (("h", "v") if layout == "both" else (layout,)):
-        signature = _signature(out, {"render": settings, "kind": kind, "title": title, "lang": lang, "blur": blur, "subtitles": subtitles, "source_size": source_size})
+        signature = _signature(out, {"render": settings, "kind": kind, "title": title, "lang": lang, "blur": blur, "subtitles": subtitles, "source_size": source_size,"reframe":reframe})
         destination = out / f"output_{kind}.mp4"
-        if destination.exists() and not force and previous_meta.get(kind, {}).get("signature") == signature:
+        if destination.exists() and not force and not debug_layout and previous_meta.get(kind, {}).get("signature") == signature:
             results[kind] = {**previous_meta[kind], "cached": True}
             print(f"render {kind}: cached {destination}", flush=True)
             continue
@@ -257,8 +495,30 @@ def run(clip: Path, out: Path, windows: Sequence[Mapping[str, Any]], points: Map
             frame_size = (int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)), int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
             fps = float(settings["fps"])
             total = round(total_input / input_fps * fps)
-            geometry = Layout.create(kind, settings, source_size or frame_size)
-            painter = Composer(settings, geometry, windows, points, events, judgments, narration, transcript, title=title, sources=_sources(out, settings, config, lang), lang=lang, blur=blur, subtitles=subtitles, config=config)
+            effective=copy.deepcopy(settings)
+            shot_list=read("shots.json", [])
+            plan={}
+            if kind=="v" and reframe=="auto" and frame_size[0]/frame_size[1]>4/3:
+                subtitle_result=detect_subtitles(clip,settings["reframe"]) if not subtitles else {"bounds":None}
+                (out / "burned_subtitles.json").write_text(json.dumps(subtitle_result,indent=2))
+                plan=plan_crops(*(source_size or frame_size),shot_list,points,subtitle_result["bounds"],settings["reframe"])
+                mode=subtitle_mode(subtitle_result,*(source_size or frame_size),settings["reframe"]) if not subtitles else {"mode":"center","oversized":False}
+                plan.update(mode)
+                if mode["mode"] == "off":
+                    plan["enabled"]=False
+                else:
+                    effective["v"].update(effective["v_reframe"])
+                    effective["components"].update(effective["reframe_components"])
+                    if mode["mode"] == "strip":
+                        for shot in plan["shots"]:
+                            shot["height"]=mode["strip_y"]
+            (out / f"reframe_{kind}.json").write_text(json.dumps(plan,indent=2))
+            geometry = Layout.create(kind, effective, source_size or frame_size,crop_at(plan,0),strip_y=plan.get("strip_y") if plan.get("mode")=="strip" else None)
+            painter = Composer(effective, geometry, windows, points, events, judgments, narration, transcript, title=title, sources=_sources(out, settings, config, lang), lang=lang, blur=blur, subtitles=subtitles, config=config, shots=shot_list,reframe_plan=plan)
+            (out / f"panel_spacing_{kind}.json").write_text(json.dumps({"geometry":{"picture":geometry.video,"strip":geometry.strip_video,"strip_y":geometry.strip_y},"spacing":getattr(painter.panels,"spacing",None),"positions":painter.panels.p},indent=2))
+            (out / f"layout_{kind}.json").write_text(json.dumps(list(painter.placements.values()), ensure_ascii=False, indent=2))
+            if debug_layout:
+                painter.debug_layout(clip, out)
             raw = out / f"render_{kind}_noaudio.mp4"
             log_path = out / f"render_{kind}_ffmpeg.log"
             command = [executable, "-y", "-hide_banner", "-loglevel", "warning", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{geometry.output[0]}x{geometry.output[1]}", "-r", str(fps), "-i", "pipe:0", "-an", "-c:v", encoder, "-pix_fmt", "yuv420p"]
@@ -270,6 +530,7 @@ def run(clip: Path, out: Path, windows: Sequence[Mapping[str, Any]], points: Map
                     command += ["-allow_sw", "1"]
             command.append(str(raw))
             with log_path.open("w", encoding="utf-8") as log:
+                trace = (out / f"layout_trace_{kind}.jsonl").open("w", encoding="utf-8")
                 process = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=log, stdout=subprocess.DEVNULL)
                 last_source = -1
                 frame = None
@@ -285,6 +546,7 @@ def run(clip: Path, out: Path, windows: Sequence[Mapping[str, Any]], points: Map
                         rgb = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
                         point_index = min(len(points["pose"]) - 1, round(seconds * float(points.get("fps", input_fps))))
                         composed = painter.frame(rgb, seconds, point_index)
+                        trace.write(json.dumps({"frame": frame_index, **painter.audit}) + "\n")
                         process.stdin.write(composed.tobytes())
                         if frame_index % max(1, round(fps * 5)) == 0:
                             print(f"render {kind}: {seconds:.1f}/{total / fps:.1f}s elapsed={time.perf_counter() - started:.1f}s", flush=True)
@@ -294,6 +556,7 @@ def run(clip: Path, out: Path, windows: Sequence[Mapping[str, Any]], points: Map
                     process.kill()
                     raise
                 finally:
+                    trace.close()
                     capture.release()
                     try:
                         process.stdin.close()

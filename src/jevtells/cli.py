@@ -38,6 +38,9 @@ def _targets_changed(output: Path, anchors: list[tuple[int, float]]) -> bool:
 def _arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="jevtells")
     subparsers = parser.add_subparsers(dest="command")
+    doctor_parser=subparsers.add_parser("doctor",help="check Python, ffmpeg, models, fonts and key without writing files")
+    doctor_parser.add_argument("--config")
+    subparsers.add_parser("download",help="download MediaPipe models and OFL fonts to JEVTELLS_HOME or current directory")
 
     people_parser = subparsers.add_parser("people", help="number detected people in a representative frame")
     people_parser.add_argument("input")
@@ -56,7 +59,7 @@ def _arguments() -> argparse.Namespace:
     run_parser.add_argument("--start", type=float, default=0.0)
     run_parser.add_argument("--duration", type=float)
     run_parser.add_argument("--force", action="store_true")
-    run_parser.add_argument("--until", default="state", choices=_STAGE_ORDER)
+    run_parser.add_argument("--until", default="render", choices=_STAGE_ORDER, help="last stage to run (default: render); state also writes debug.mp4")
     run_parser.add_argument("--from", dest="from_stage", choices=_STAGE_ORDER)
     run_parser.add_argument("--target", action="append", default=[], metavar="N@SECONDS", help="target person number at a time anchor; repeat for cuts")
     run_parser.add_argument("--config")
@@ -65,6 +68,8 @@ def _arguments() -> argparse.Namespace:
     run_parser.add_argument("--subtitles", choices=("on", "off"), default="on")
     run_parser.add_argument("--layout", choices=("h", "v", "both"), default="both")
     run_parser.add_argument("--title")
+    run_parser.add_argument("--debug-layout", action="store_true", help="draw per-shot target bounds, forbidden zones and label positions")
+    run_parser.add_argument("--reframe", choices=("auto","off"), default="auto", help="portrait full-height 4:3 crop (default: auto)")
     return parser.parse_args()
 
 
@@ -225,7 +230,7 @@ def _finish_run(
         if path.exists():
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
-                api_stats[name] = {key: payload.get(key) for key in ("calls", "prompt_tokens", "completion_tokens", "cost", "model", "failed", "retries", "fallbacks", "skipped", "windows") if key in payload}
+                api_stats[name] = {key: payload.get(key) for key in ("calls", "prompt_tokens", "completion_tokens", "reasoning_tokens", "response_records", "length_retries", "cost", "model", "failed", "retries", "fallbacks", "skipped", "windows") if key in payload}
                 if name == "scene" and "model" in payload:
                     api_stats[name]["cost"] = payload.get("cost")
             except (OSError, ValueError, TypeError):
@@ -233,6 +238,14 @@ def _finish_run(
     costs = [float(item["cost"]) for item in api_stats.values() if isinstance(item, Mapping) and item.get("cost") is not None]
     api_stats["total_cost"] = sum(costs) if costs else None
     metadata: dict[str, Any] = {"parameters": vars(arguments), "elapsed_s": time.perf_counter() - started, "stage_times_s": stage_times, "encoding": encoding, "language": transcript.get("language"), "target_anchors": anchors, "duration_s": duration, "occupied_hands": actions_result.get("occupied_hands", {}) if isinstance(actions_result, Mapping) else {}, "api": api_stats}
+    metadata["models_used"] = {}
+    for stage, prefix in (("judge", "jev"), ("narrate", "narrate")):
+        identifiers = set()
+        for path in (output / "raw").glob(f"{prefix}_W*.json"):
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            if raw.get("model"):
+                identifiers.add(str(raw["model"]))
+        metadata["models_used"][stage] = sorted(identifiers)
     render_meta = output / "render_meta.json"
     if render_meta.exists():
         metadata["render"] = json.loads(render_meta.read_text(encoding="utf-8"))
@@ -246,6 +259,13 @@ def _finish_run(
 
 def main() -> None:
     arguments = _arguments()
+    if arguments.command=="doctor":
+        from .doctor import run as doctor_run
+        raise SystemExit(doctor_run(load_config(arguments.config)))
+    if arguments.command=="download":
+        from .download import main as download_main
+        download_main()
+        return
     if arguments.command == "people":
         _people_command(arguments)
         return
@@ -277,7 +297,7 @@ def main() -> None:
         source_size = (int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)), int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
         capture.release()
         stage_start = time.perf_counter()
-        render.run(clip, output, windows, points, config=config, speaker=arguments.speaker, lang=arguments.lang, title=getattr(arguments, "title", None), layout=getattr(arguments, "layout", "both"), blur=blur_rectangles, subtitles=getattr(arguments, "subtitles", "on") == "on", source_size=source_size, force=force_stage("render"))
+        render.run(clip, output, windows, points, config=config, speaker=arguments.speaker, lang=arguments.lang, title=getattr(arguments, "title", None), layout=getattr(arguments, "layout", "both"), blur=blur_rectangles, subtitles=getattr(arguments, "subtitles", "on") == "on", source_size=source_size, force=force_stage("render"), debug_layout=getattr(arguments, "debug_layout", False), reframe=getattr(arguments,"reframe","auto"))
         stage_times["render"] = time.perf_counter() - stage_start
 
     if arguments.from_stage == "render":

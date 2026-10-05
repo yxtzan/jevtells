@@ -23,6 +23,8 @@ def schedule(events: Sequence[Mapping[str, Any]], seconds: float, settings: Mapp
         return {}
     result: dict[str, tuple[Mapping[str, Any], float, float]] = {}
     for event in sorted(events, key=lambda value: (float(value["t0"]), str(value.get("id", "")))):
+        if event.get("far"):
+            continue
         if event.get("type") not in settings["label_types"] or event.get("magnitude", event.get("amplitude")) == "small":
             continue
         opacity, scale = visibility(event, seconds, settings["animation"])

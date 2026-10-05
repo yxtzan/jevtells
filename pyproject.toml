@@ -11,5 +11,8 @@ jevtells = "jevtells.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+jevtells = ["data/config/*.yaml", "data/config/*.md", "data/i18n/*.yaml"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]

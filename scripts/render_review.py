@@ -66,12 +66,59 @@ def overview(video: Path, destination: Path, kind: str) -> int:
     return count
 
 
+def transitions(clip_dir: Path, destination: Path) -> list[dict[str, Any]]:
+    """Save exact encoded frames around each window's commentary boundary."""
+    windows = json.loads((clip_dir / 'windows.json').read_text())
+    records = []
+    for kind in ('h', 'v'):
+        video = clip_dir / f'output_{kind}.mp4'
+        capture = cv2.VideoCapture(str(video))
+        fps = capture.get(cv2.CAP_PROP_FPS)
+        try:
+            for index, window in enumerate(windows[1:], 1):
+                boundary = float(window['t0'])
+                first = math.ceil(boundary * fps - 1e-8)
+                folder = destination / f'transition_{kind}_{index:02d}'
+                folder.mkdir(exist_ok=True)
+                entries = []
+                tiles = []
+                for offset in range(-5, math.ceil(.4 * fps) + 2):
+                    frame_number = first + offset
+                    if frame_number < 0:
+                        continue
+                    capture.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+                    ok, frame = capture.read()
+                    if not ok:
+                        raise RuntimeError(f'transition decoding failed at frame {frame_number}')
+                    seconds = frame_number / fps
+                    filename = folder / f'frame_{frame_number:05d}.png'
+                    cv2.imwrite(str(filename), frame)
+                    elapsed = seconds - boundary
+                    phase = 'previous' if elapsed < 0 else 'fade-out' if elapsed < .15 else 'fade-in' if elapsed < .4 else 'settled'
+                    entries.append({'frame': frame_number, 'seconds': seconds, 'elapsed': elapsed, 'phase': phase, 'file': str(filename)})
+                    tile = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)).resize((240, 320) if kind == 'v' else (320, 180))
+                    tiles.append(tile)
+                width, height = tiles[0].size
+                sheet = Image.new('RGB', (5 * width, math.ceil(len(tiles) / 5) * (height + 24)), '#0B0B0B')
+                draw = ImageDraw.Draw(sheet)
+                for position, (tile, entry) in enumerate(zip(tiles, entries)):
+                    x, y = (position % 5) * width, (position // 5) * (height + 24)
+                    sheet.paste(tile, (x, y + 24))
+                    draw.text((x + 4, y + 4), f"{entry['seconds']:.3f}s {entry['phase']}", fill='white')
+                sheet.save(folder / 'contact_sheet.png')
+                records.append({'kind': kind, 'boundary': boundary, 'frames': entries, 'contact_sheet': str(folder / 'contact_sheet.png')})
+        finally:
+            capture.release()
+    return records
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("clip_dir", type=Path)
     parser.add_argument("--at", type=float, action="append", required=True)
     parser.add_argument("--reference-v", type=Path)
     parser.add_argument("--reference-h", type=Path)
+    parser.add_argument("--transitions", action="store_true", help="save 5 frames before and all fade frames after every commentary boundary")
     arguments = parser.parse_args()
     destination = arguments.clip_dir / "render_review"
     destination.mkdir(parents=True, exist_ok=True)
@@ -95,7 +142,9 @@ def main() -> None:
             compare = destination / f"compare_{kind}.png"
             comparison(frame, reference, compare)
             results[kind]["compare"] = str(compare)
-    results["files"] = sorted(str(path) for path in destination.glob("*.png"))
+    if arguments.transitions:
+        results['transitions'] = transitions(arguments.clip_dir, destination)
+    results["files"] = sorted(str(path) for path in destination.rglob("*.png"))
     (destination / "manifest.json").write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps({kind: {"snapshots": len(results[kind]["snapshots"]), "overview_frames": results[kind]["overview_frames"]} for kind in ("h", "v")}, ensure_ascii=False))
 

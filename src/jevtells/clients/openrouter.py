@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+from ..resources import asset_path
 
 try:  # python-dotenv is a runtime dependency, with a tiny fallback for old envs.
     from dotenv import load_dotenv
@@ -57,7 +58,7 @@ class _BodyReader:
 
 
 def _load_key(env_path: str | Path | None = None) -> str:
-    env_path = Path(env_path) if env_path is not None else Path.cwd() / ".env"
+    env_path = Path(env_path) if env_path is not None else asset_path(".env")
     if load_dotenv is not None:
         # Do not let python-dotenv silently search unrelated parent folders;
         # the project key must come from this checkout's .env.
@@ -102,6 +103,9 @@ def _request_json(
     env_path: str | Path | None = None,
     transport: Any | None = None,
     sleep: Any = time.sleep,
+    audit_dir: Path | None = None,
+    on_response: Any | None = None,
+    before_request: Any | None = None,
 ) -> dict[str, Any]:
     """POST JSON with an initial request plus up to three retries."""
 
@@ -114,8 +118,44 @@ def _request_json(
         "X-Title": "JevTells",
     }
     last_error: Exception | None = None
-    for attempt in range(max(1, int(attempts))):
+    def record(status, raw, error=None):
+        safe = _redact(raw, key)
         try:
+            parsed = json.loads(safe)
+        except (ValueError, TypeError):
+            parsed = {}
+        cost = _cost(parsed) if isinstance(parsed, dict) else None
+        cost_reason = None if cost is not None else "response has no valid usage.cost"
+        api_error = parsed.get("error") if isinstance(parsed, dict) else None
+        metadata = api_error.get("metadata") if isinstance(api_error, Mapping) else None
+        if (cost is None and status == 400 and isinstance(metadata, Mapping)
+                and "provider_name" in metadata and metadata["provider_name"] is None):
+            cost = 0.0
+            cost_reason = "未路由，按 0 计：HTTP 400 且 error.metadata.provider_name 显式为 null，OpenRouter 层拒绝，未发给模型服务商"
+        usage = parsed.get("usage", {}) if isinstance(parsed, dict) else {}
+        details = usage.get("completion_tokens_details", {}) if isinstance(usage, Mapping) else {}
+        choices = parsed.get("choices", []) if isinstance(parsed, dict) else []
+        finish_reasons = [choice.get("finish_reason") for choice in choices if isinstance(choice, Mapping)] if isinstance(choices, list) else []
+        event = {"status": status, "body": safe, "error": error, "cost": cost,
+                 "cost_reason": cost_reason,
+                 "reasoning_tokens": details.get("reasoning_tokens") if isinstance(details, Mapping) else None,
+                 "finish_reason": finish_reasons[0] if finish_reasons else None,
+                 "finish_reasons": finish_reasons,
+                 "max_tokens": payload.get("max_tokens"),
+                 "model": payload.get("model"), "attempt": attempt + 1}
+        if error and audit_dir is not None:
+            audit_dir.mkdir(parents=True, exist_ok=True)
+            # No request headers or request body are retained.
+            path = audit_dir / f"openrouter_error_{time.time_ns()}.json"
+            path.write_text(json.dumps(event, ensure_ascii=False, indent=2), encoding="utf-8")
+        if on_response is not None:
+            on_response(event)
+
+    for attempt in range(max(1, int(attempts))):
+        if before_request is not None:
+            before_request()
+        try:
+            status = 200
             if transport is not None:
                 status, response_body = transport(url, headers, body, float(timeout))
                 if int(status) >= 400:
@@ -124,21 +164,31 @@ def _request_json(
             else:
                 request = Request(url, data=body, headers=headers, method="POST")
                 with urlopen(request, timeout=float(timeout)) as response:
+                    status = response.status
                     raw = response.read().decode("utf-8")
-            parsed = json.loads(raw)
+            parsed = json.loads(_redact(raw, key))
             if not isinstance(parsed, dict):
+                record(int(status), raw, "InvalidResponse")
                 raise OpenRouterError("OpenRouter 返回的 JSON 顶层不是对象")
+            record(int(status), raw)
             return parsed
         except HTTPError as error:
             response_body = error.read().decode("utf-8", errors="replace")
-            if error.code == 429 or error.code >= 500:
+            record(error.code, response_body, "HTTPError")
+            if error.code == 429 or 500 <= error.code < 600:
                 last_error = OpenRouterError(f"OpenRouter HTTP {error.code}: {_redact(response_body[:5000], key)}", status=error.code)
             else:
                 raise OpenRouterError(f"OpenRouter HTTP {error.code}: {_redact(response_body[:5000], key)}", status=error.code) from error
-        except (TimeoutError, socket.timeout, URLError, OSError, json.JSONDecodeError) as error:
+        except (TimeoutError, socket.timeout, URLError, OSError) as error:
+            record(None, str(error), type(error).__name__)
             last_error = OpenRouterError(f"OpenRouter 请求失败：{_redact(error, key)}")
+            if not isinstance(error, (TimeoutError, socket.timeout)) and not isinstance(getattr(error, "reason", None), (TimeoutError, socket.timeout)):
+                raise last_error from error
+        except json.JSONDecodeError as error:
+            record(int(status), raw, "InvalidJSON")
+            raise OpenRouterError("OpenRouter response is invalid JSON") from error
         if attempt + 1 < max(1, int(attempts)):
-            sleep(0.5 * (2**attempt))
+            sleep(2 * (2**attempt))
     if isinstance(last_error, OpenRouterError):
         raise last_error
     raise OpenRouterError(f"OpenRouter 请求失败：{_redact(type(last_error).__name__ if last_error else 'unknown', key)}") from last_error
@@ -181,6 +231,9 @@ def decide(
     env_path: str | Path | None = None,
     transport: Any | None = None,
     sleep: Any = time.sleep,
+    audit_dir: Path | None = None,
+    on_response: Any | None = None,
+    before_request: Any | None = None,
 ) -> dict[str, Any]:
     """Call Jev's alpha decisions endpoint once and retain raw accounting."""
 
@@ -193,7 +246,7 @@ def decide(
             if isinstance(item, Mapping) and item.get("id") is not None
         }
     payload = {"model": model, "state": dict(state), "questions": question_record}
-    return _result(_request_json(DECISIONS_URL, payload, timeout=timeout, attempts=attempts, api_key=api_key, env_path=env_path, transport=transport, sleep=sleep))
+    return _result(_request_json(DECISIONS_URL, payload, timeout=timeout, attempts=attempts, api_key=api_key, env_path=env_path, transport=transport, sleep=sleep, audit_dir=audit_dir, on_response=on_response, before_request=before_request))
 
 
 def _image_content(image: str | bytes | Path) -> str:
@@ -217,12 +270,16 @@ def chat(
     response_format: Mapping[str, Any] | None = None,
     max_tokens: int | None = None,
     temperature: float = 0.2,
+    reasoning: Mapping[str, Any] | None = None,
     timeout: float = 90.0,
     attempts: int = 4,
     api_key: str | None = None,
     env_path: str | Path | None = None,
     transport: Any | None = None,
     sleep: Any = time.sleep,
+    audit_dir: Path | None = None,
+    on_response: Any | None = None,
+    before_request: Any | None = None,
 ) -> dict[str, Any]:
     """Call chat completions, optionally appending image parts to the last user message."""
 
@@ -245,9 +302,11 @@ def chat(
     payload: dict[str, Any] = {"model": model, "messages": serialised, "temperature": temperature}
     if response_format is not None:
         payload["response_format"] = dict(response_format)
+    if reasoning is not None:
+        payload["reasoning"] = dict(reasoning)
     if max_tokens is not None:
         payload["max_tokens"] = int(max_tokens)
-    return _result(_request_json(CHAT_URL, payload, timeout=timeout, attempts=attempts, api_key=api_key, env_path=env_path, transport=transport, sleep=sleep))
+    return _result(_request_json(CHAT_URL, payload, timeout=timeout, attempts=attempts, api_key=api_key, env_path=env_path, transport=transport, sleep=sleep, audit_dir=audit_dir, on_response=on_response, before_request=before_request))
 
 
 class OpenRouterClient:
@@ -262,6 +321,9 @@ class OpenRouterClient:
         attempts: int = 4,
         sleep: Any = time.sleep,
         transport: Any | None = None,
+        audit_dir: Path | None = None,
+        on_response: Any | None = None,
+        before_request: Any | None = None,
     ) -> None:
         self.api_key = api_key
         self.env_path = env_path
@@ -269,14 +331,15 @@ class OpenRouterClient:
         self.attempts = attempts
         self.sleep = sleep
         self.transport = transport
+        self.audit_dir, self.on_response, self.before_request = audit_dir, on_response, before_request
 
     def decide(self, state: Mapping[str, Any], questions: Sequence[Mapping[str, Any]], model: str = "typesafe/jev-1.13", **kwargs: Any) -> dict[str, Any]:
-        params = {"timeout": self.timeout, "attempts": self.attempts, "api_key": self.api_key, "env_path": self.env_path, "sleep": self.sleep, "transport": self.transport}
+        params = {"timeout": self.timeout, "attempts": self.attempts, "api_key": self.api_key, "env_path": self.env_path, "sleep": self.sleep, "transport": self.transport, "audit_dir": self.audit_dir, "on_response": self.on_response, "before_request": self.before_request}
         params.update(kwargs)
         return decide(state, questions, model, **params)
 
     def chat(self, messages: Sequence[Mapping[str, Any]], model: str, **kwargs: Any) -> dict[str, Any]:
-        params = {"timeout": self.timeout, "attempts": self.attempts, "api_key": self.api_key, "env_path": self.env_path, "sleep": self.sleep, "transport": self.transport}
+        params = {"timeout": self.timeout, "attempts": self.attempts, "api_key": self.api_key, "env_path": self.env_path, "sleep": self.sleep, "transport": self.transport, "audit_dir": self.audit_dir, "on_response": self.on_response, "before_request": self.before_request}
         params.update(kwargs)
         return chat(messages, model, **params)
 

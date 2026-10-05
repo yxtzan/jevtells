@@ -170,6 +170,7 @@ def test_cli_render_only_never_visits_analysis_or_api_stages(tmp_path, monkeypat
     monkeypatch.setattr(cli.render, "run", lambda *args, **kwargs: calls.append(kwargs))
     cli.main()
     assert len(calls) == 1 and calls[0]["title"] == "Changed title"
+    assert calls[0]["force"] is True
     assert set(json.loads((output / "run_meta.json").read_text())["stage_times_s"]) == {"render"}
 
 
@@ -212,7 +213,7 @@ def test_probability_bars_interpolate_with_the_scores():
     panels = Panels(settings, geometry, Fonts(settings, 1), load_translations("zh"), windows, judgments, {}, "标题", "免责声明")
     initial = panels.analysis(1, 0)
     final = panels.analysis(1, .3)
-    p, g = settings["v"], settings["components"]
+    p, g = panels.p, settings["components"]
     y = p["lower_y"] + g["heading_gap"] + p["choice_heading_size"] + p["choice_top"] + p["choice_size"] + p["choice_bottom"] + 4
     assert initial.getpixel((300, int(y)))[:3] == (200, 255, 46)
     assert final.getpixel((300, int(y)))[:3] == (38, 38, 38)
