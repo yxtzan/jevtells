@@ -103,3 +103,10 @@ def test_failed_generation_preserves_previous_narration_cache(tmp_path):
     assert failed['cost'] is None and failed['http_calls']==1
     assert json.loads((tmp_path/'raw/narrate_batch_0.json').read_text())=={'previous':True}
     assert len(list((tmp_path/'raw').glob('openrouter_error_*.json')))==1
+
+
+def test_metric_name_is_not_mistaken_for_an_emotion_opening():
+    facts={'subtitle':'hello world','highlights':['紧张度 0.90，全场最高']}
+    assert validation_errors({'line':'紧张度升至全场最高','quote':'hello world'},facts,[],'','zh')==[]
+    assert any('starts with an intent' in e for e in validation_errors(
+        {'line':'紧张，谈到芯片设计','quote':'hello world'},facts,[],'','zh'))

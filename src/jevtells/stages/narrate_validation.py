@@ -82,7 +82,12 @@ def validation_errors(parsed: Mapping[str, Any], facts: Mapping[str, Any], previ
     opening_names = {value.casefold() for language in ("zh", "en")
                      for tr in [load_translations(language)] for group in ("intents", "emotions")
                      for value in tr[group].values()}
-    if any(line.casefold().startswith(name) for name in opening_names):
+    metric_names = {value.casefold() for language in ("zh", "en")
+                    for value in load_translations(language)["facts"]["scores"].values()}
+    # 紧张 is an emotion label, but 紧张度 is the distinct metric name.
+    if any(line.casefold().startswith(name) and not any(
+            metric.startswith(name) and len(metric)>len(name) and line.casefold().startswith(metric)
+            for metric in metric_names) for name in opening_names):
         errors.append("line starts with an intent or emotion display label")
     if previous and repeated_highlights(line, previous[-1]):
         errors.append("highlight claim repeats the adjacent previous line")
