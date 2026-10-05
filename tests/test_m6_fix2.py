@@ -162,3 +162,14 @@ def test_presence_metadata_drift_does_not_invalidate_paid_analysis():
     changed[0]['target_offscreen'] = True
     assert _analysis_windows_changed(changed,old)
     assert _analysis_windows_changed(old,None)
+
+
+def test_zoom_transition_continues_from_previous_pan_position():
+    from jevtells.render.reframe import plan_crops,crop_at
+    pose = np.array([person(.99)]*90)
+    shots = [{'index':1,'t0':0,'t1':2,'multi_person':False,'target_center_x':500},
+             {'index':2,'t0':2,'t1':3,'multi_person':True}]
+    plan = plan_crops(1280,720,shots,{'pose':pose,'fps':30},None,{'pan_wait_seconds':.1,'max_offset':.2})
+    assert plan['shots'][0]['pans']
+    before = crop_at({'enabled':True,'shots':[plan['shots'][0]]},2)
+    assert crop_at(plan,2) == before

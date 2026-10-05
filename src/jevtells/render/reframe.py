@@ -129,8 +129,9 @@ def plan_crops(width: int, height: int, shots: Sequence[Mapping[str, Any]], poin
     for previous, current in zip(timeline, timeline[1:]):
         source_shot = next(s for s in shots if s['index'] == current['index'])
         if not source_shot.get('cut_at_start') and bool(previous.get('multi_person')) != bool(current.get('multi_person')):
+            origin = crop_at({'enabled':True,'shots':[previous]},current['t0'])
             current['transition'] = {'t0':current['t0'], 'seconds':float(settings.get('zoom_seconds',.6)),
-                                     'left':previous['left'], 'width':previous['width'], 'height':previous['height']}
+                                     'left':origin[0], 'width':origin[2], 'height':origin[3]}
     return {"enabled":True,"shots":timeline,"subtitle_bounds":subtitles,"subtitle_oversized":bool(subtitles is not None and subtitles[1]-subtitles[0]>height*4/3)}
 
 

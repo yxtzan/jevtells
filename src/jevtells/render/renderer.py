@@ -152,7 +152,8 @@ class Composer:
             if self.reframe_plan.get("enabled"):
                 self.layout = self.video_layout(seconds)
             frame_core = body_zones(np.asarray(self.points["pose"])[index], self.layout.source, self.visibility)
-            face = frame_core.get("face_raw")
+            target_faces = faces_at(np.asarray(self.points["pose"])[index:index+1], self.layout.source, self.visibility, raw=True, settings=self.person_settings)
+            face = target_faces[0] if target_faces else None
             face = list(self.layout.source_rect((face[0],face[1],face[2]-face[0],face[3]-face[1]))) if face else None
             faces = [list(self.layout.source_rect((f[0],f[1],f[2]-f[0],f[3]-f[1]))) for f in faces_at(self.all_poses[index],self.layout.source,self.visibility,raw=True,settings=self.person_settings)]
             mid = self.layout.source_point(frame_core.get("midline", self.layout.source[0]/2), 0)[0]
@@ -445,7 +446,6 @@ class Composer:
             self.layout=self.video_layout(seconds)
         self.audit = {"seconds": seconds, "output": list(self.layout.output), "labels": [], "forbidden": self.forbidden(seconds)}
         cores = body_zones(np.asarray(self.points["pose"])[point_index], self.layout.source, self.visibility)
-        face = cores.get("face_raw")
         self.audit["leader_zones"] = [{"name":"face","rect":list(self.layout.source_rect((f[0],f[1],f[2]-f[0],f[3]-f[1])))} for f in faces_at(self.all_poses[point_index], self.layout.source, self.visibility, raw=True, settings=self.person_settings)]
         self.audit["midline"] = self.layout.source_point(cores["midline"],0)[0] if "midline" in cores else None
         self.audit["endpoint_exemption"] = self.layout.px(60)
