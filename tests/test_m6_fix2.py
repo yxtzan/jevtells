@@ -67,3 +67,19 @@ def test_srt_does_not_merge_before_speaker_classification(tmp_path):
     result = merge_short_windows(mark_windows(result,[(0,.3)]),{})
     assert len(result) == 2 and result[0]['speaker_other']
 
+
+def test_partial_edge_people_allow_full_right_card():
+    import copy
+    from jevtells.config import load_config
+    from jevtells.render.geometry import Layout
+    from jevtells.render.renderer import Composer
+    config = load_config(); settings = copy.deepcopy(config['render'])
+    center = person(.5)
+    center[11,0] = .4; center[12,0] = .6
+    points = {'pose':np.array([center]*30), 'poses_all':np.array([[person(.01),center,person(.99)]]*30),
+              'fps':30,'hands':np.full((30,2,21,3),np.nan)}
+    shots = [{'index':1,'t0':0,'t1':1,'label':'target','far':False}]
+    painter = Composer(settings,Layout.create('h',settings,(1280,720)),[{'id':'W0','t0':0,'t1':1}],
+                       points,[],{},{},{},title='Title',sources='Source',lang='zh',blur=[],subtitles=False,config=config,shots=shots)
+    assert painter.card_modes[1] == 'full' and painter.card_sides[1] == 'right'
+    assert painter.card_face_collisions[1] == {'right':0,'left':0}

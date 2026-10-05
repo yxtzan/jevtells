@@ -87,6 +87,7 @@ class Composer:
         self.anchors["head"] = smooth_zero_phase(head, smooth_window, polynomial)
         self.card_sides = {}
         self.card_modes = {}
+        self.card_face_collisions = {}
         self.base_layout = layout
         self.all_poses = np.asarray(points.get("poses_all", pose[:, None]), dtype=float)
         for shot in self.shots:
@@ -99,6 +100,7 @@ class Composer:
                 for side, x in (("right",self.p["card"][0]),("left",settings["layout"]["card_left_x"])):
                     rect = layout.rect((x,*self.p["card"][1:]))
                     scores[side] = sum(intersects(rect, layout.source_rect((f[0],f[1],f[2]-f[0],f[3]-f[1]))) for f in faces)
+                self.card_face_collisions[int(shot["index"])] = scores
                 preferred = self.card_sides[int(shot["index"])]
                 side = min(scores, key=lambda k: (scores[k], k != preferred))
                 self.card_sides[int(shot["index"])] = side
@@ -199,7 +201,7 @@ class Composer:
         vx,vy,vw,vh=self.layout.video
         cfg=self.settings.get("layout",{})
         result=select_positions(self.layout.rect((vx,vy,vw,vh)),target,[zone["rect"] for zone in zones],sizes,anchors,margin=self.layout.px(cfg.get("safe_margin",24)),gap=self.layout.px(cfg.get("stack_gap",12)),step=self.layout.px(cfg.get("candidate_step",12)),soft=soft,samples=samples,midline=midline,face=face,exemption=self.layout.px(60),fraction=self.settings["label"]["leader_fraction"],max_face_crossing_ratio=float(cfg.get('max_face_crossing_ratio',0)),fixed_leader_width=True)
-        return {"shot_index":shot["index"],"t0":shot["t0"],"t1":shot["t1"],"sizes":sizes,"anchors":anchors,"sample_counts":{slot:len(v) for slot,v in samples.items()},"forbidden":zones,"card_side":self.card_sides.get(int(shot["index"])),**result}
+        return {"shot_index":shot["index"],"t0":shot["t0"],"t1":shot["t1"],"sizes":sizes,"anchors":anchors,"sample_counts":{slot:len(v) for slot,v in samples.items()},"forbidden":zones,"card_side":self.card_sides.get(int(shot["index"])),"card_mode":self.card_modes.get(int(shot["index"])),"card_face_collisions":self.card_face_collisions.get(int(shot["index"])),**result}
 
     def video_layout(self, seconds: float) -> Layout:
         shot = next((s for s in self.shots if float(s["t0"]) <= seconds < float(s["t1"])), self.shots[-1])
