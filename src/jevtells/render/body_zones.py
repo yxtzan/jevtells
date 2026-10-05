@@ -23,9 +23,13 @@ def body_zones(pose: np.ndarray, source: tuple[int, int], visibility: float = .5
         values = values.reshape(-1, 2)
         values = values[np.isfinite(values).all(axis=1)]
         if len(values):
-            lo, hi = np.percentile(values, [5, 95], axis=0) if len(values) > 1 else (values[0], values[0])
+            lo, hi = (np.min(values, axis=0), np.max(values, axis=0)) if name.startswith('face') else np.percentile(values, [5, 95], axis=0)
             result[name] = [float(lo[0]-padding), float(lo[1]-padding), float(hi[0]+padding), float(hi[1]+padding)]
-    bounds('face', xy[:, :11], .35 * shoulder)
+    bounds('face_raw', xy[:, :11])
+    bounds('face', xy[:, :11], .15 * shoulder)
+    midpoints = (xy[:, 11, 0] + xy[:, 12, 0]) / 2
+    if np.isfinite(midpoints).any():
+        result['midline'] = float(np.nanmedian(midpoints))
     shoulders = xy[:, [11, 12]].reshape(-1, 2)
     shoulders = shoulders[np.isfinite(shoulders).all(axis=1)]
     if len(shoulders) and np.ptp(shoulders[:, 0]) > 1:

@@ -50,7 +50,7 @@ class Composer:
         self.settings, self.layout, self.windows, self.points = settings, layout, windows, points
         self.events, self.judgments, self.transcript = actions, judgments, transcript
         self.blur, self.subtitles = blur, subtitles
-        self.shots = shots
+        self.shots = list(shots) or [{"index":1,"t0":0.,"t1":len(points.get("pose",[]))/float(points.get("fps",30)),"label":"target","far":False}]
         self.reframe_plan = reframe_plan or {}
         self.audit: dict[str, Any] = {}
         self.tr = load_translations(lang)
@@ -124,22 +124,63 @@ class Composer:
             xy = xy[np.isfinite(xy).all(axis=1)]
             median = np.median(xy,axis=0) if len(xy) else np.array([.5,.5])
             anchors[slot] = self.layout.source_point(median[0]*self.layout.source[0],median[1]*self.layout.source[1])
-        zones = self.forbidden(float(shot["t1"])-1e-9)
-        zones = [zone for zone in zones if zone["name"] not in {"face", "torso"}]
-        protected = []
-        soft = []
-        for name, (x0,y0,x1,y1) in cores.items():
-            rect = list(self.layout.source_rect((x0,y0,x1-x0,y1-y0)))
-            if name == "hands":
-                soft.append(rect)
-            else:
-                zones.append({"name": name, "rect": rect})
-                protected.append(rect)
-        target = next((zone["rect"] for zone in zones if zone["name"]=="torso"),None)
+        saved_layout = self.layout
+        samples = {slot: [] for slot in ("left", "right")}
+        hard_by_name = {}
+        frame_faces, frame_mids = [], []
+        fps = float(self.points.get("fps", 30))
+        for index in range(start, min(end, len(self.points["pose"]))):
+            seconds = index / fps
+            if self.reframe_plan.get("enabled"):
+                self.layout = replace(saved_layout, crop=crop_at(self.reframe_plan, seconds))
+            frame_core = body_zones(np.asarray(self.points["pose"])[index], self.layout.source, self.visibility)
+            face = frame_core.get("face_raw")
+            face = list(self.layout.source_rect((face[0],face[1],face[2]-face[0],face[3]-face[1]))) if face else None
+            mid = self.layout.source_point(frame_core.get("midline", self.layout.source[0]/2), 0)[0]
+            wi, _ = window_at(self.windows, seconds)
+            lost = not np.isfinite(np.asarray(self.points["pose"])[index,:,:2]).any()
+            if "target_index" in self.points: lost |= int(self.points["target_index"][index]) < 0
+            shot_label = str(self.windows[wi].get("shot", "target")) if wi is not None else "target"
+            has_label = False
+            for slot, (event, alpha, zoom) in schedule(self.events,seconds,self.settings,lost=lost,shot=shot_label).items():
+                if shot.get("far") or shot.get("label")=="other" or (event.get("shot_index") is not None and event["shot_index"]!=shot["index"]):
+                    continue
+                anchor_slot="head" if event.get("limb") in {"head","body"} else slot
+                xy=self.raw_anchors[anchor_slot][index]
+                if not np.isfinite(xy).all():xy=self.anchors[anchor_slot][index]
+                if not np.isfinite(xy).all():continue
+                sprite=self.label_sprite(event,slot)
+                has_label = True
+                samples[slot].append({"anchor":self.layout.source_point(xy[0]*self.layout.source[0],xy[1]*self.layout.source[1]),"face":face,"midline":mid,"size":sprite.size,"zoom":zoom,"offset":self.layout.px(self.p["label_size"]*self.settings["components"]["line_height"]+2*self.settings["label"]["padding"][1])/2})
+            if has_label:
+                if face: frame_faces.append(face)
+                frame_mids.append(mid)
+                zones_at = self.forbidden(seconds)
+                for zone_index, zone in enumerate(zones_at):
+                    name, rect = zone["name"], zone["rect"]
+                    if name == "edge": name += ":" + str(zone_index)
+                    if name not in hard_by_name:
+                        hard_by_name[name] = list(rect)
+                    else:
+                        old = hard_by_name[name]
+                        hard_by_name[name] = [min(old[0],rect[0]),min(old[1],rect[1]),max(old[2],rect[2]),max(old[3],rect[3])]
+        self.layout = saved_layout
+        zones=[{"name":name,"rect":rect} for name,rect in hard_by_name.items()]
+        soft=[]
+        for name in ("torso","hands"):
+            if name in cores:
+                x0,y0,x1,y1=cores[name]
+                soft.append(list(self.layout.source_rect((x0,y0,x1-x0,y1-y0))))
+        target = soft[0] if cores.get("torso") else None
+        for slot, values in samples.items():
+            if values:
+                anchors[slot]=list(np.median([v['anchor'] for v in values],axis=0))
+        midline=float(np.median(frame_mids)) if frame_mids else None
+        face=[min(f[0] for f in frame_faces),min(f[1] for f in frame_faces),max(f[2] for f in frame_faces),max(f[3] for f in frame_faces)] if frame_faces else None
         vx,vy,vw,vh=self.layout.video
         cfg=self.settings.get("layout",{})
-        result=select_positions(self.layout.rect((vx,vy,vw,vh)),target,[zone["rect"] for zone in zones],sizes,anchors,{slot:self.layout.point(*self.p["label_slots"][i]) for i,slot in enumerate(("left","right"))},margin=self.layout.px(cfg.get("safe_margin",24)),gap=self.layout.px(cfg.get("stack_gap",12)),step=self.layout.px(cfg.get("candidate_step",12)),line_ratio=cfg.get("max_leader_ratio",.45),soft=soft,protected=protected)
-        return {"shot_index":shot["index"],"t0":shot["t0"],"t1":shot["t1"],"sizes":sizes,"anchors":anchors,"forbidden":zones,"card_side":self.card_sides.get(int(shot["index"])),**result}
+        result=select_positions(self.layout.rect((vx,vy,vw,vh)),target,[zone["rect"] for zone in zones],sizes,anchors,margin=self.layout.px(cfg.get("safe_margin",24)),gap=self.layout.px(cfg.get("stack_gap",12)),step=self.layout.px(cfg.get("candidate_step",12)),soft=soft,samples=samples,midline=midline,face=face,exemption=self.layout.px(60),fraction=self.settings["label"]["leader_fraction"])
+        return {"shot_index":shot["index"],"t0":shot["t0"],"t1":shot["t1"],"sizes":sizes,"anchors":anchors,"sample_counts":{slot:len(v) for slot,v in samples.items()},"forbidden":zones,"card_side":self.card_sides.get(int(shot["index"])),**result}
 
     def card_x(self, seconds: float) -> float:
         default=self.p.get("card",[0])[0]
@@ -204,30 +245,17 @@ class Composer:
                 continue
             if current_shot and event.get("shot_index") and event["shot_index"] != current_shot["index"]:
                 continue
-            if current_shot and self.layout.kind == "h" and abs(self.card_x(seconds)-self.card_x(float(current_shot["t1"])-1e-9)) > 1e-6:
-                continue
-            if current_shot and self.layout.kind=="h" and int(current_shot["index"])>1:
-                i=int(current_shot["index"])
-                if self.card_sides[i] != self.card_sides[i-1]:
-                    entered=progress(seconds-float(current_shot["t0"])-self.settings["animation"]["card_seconds"],self.settings["animation"]["label_in_seconds"])
-                    alpha*=entered
-                    zoom=min(zoom,self.settings["animation"]["label_start_scale"]+(1-self.settings["animation"]["label_start_scale"])*entered)
-                    if alpha<=0:
-                        continue
             xy = self.anchors["head" if event.get("limb") in {"head", "body"} else slot][point_index]
             if not np.isfinite(xy).all():
                 continue
             anchor = self.layout.source_point(xy[0] * self.layout.source[0], xy[1] * self.layout.source[1])
-            vx, vy, vw, vh = self.layout.video
-            if not self.layout.px(vx) <= anchor[0] <= self.layout.px(vx + vw) or not self.layout.px(vy) <= anchor[1] <= self.layout.px(vy + vh):
-                continue
-            if not self.layout.strip_video and anchor[1] >= self.layout.px(vy + vh * (1 - self.settings["subtitle_exclusion_ratio"])):
-                continue
-            if self.layout.kind == "h":
-                _cx, cy, cw, ch = self.p["card"]
-                cx=self.card_x(seconds)
-                if self.layout.px(cx) <= anchor[0] <= self.layout.px(cx + cw) and self.layout.px(cy) <= anchor[1] <= self.layout.px(cy + ch):
-                    continue
+            projected_anchor = anchor
+            vx,vy,vw,vh=self.layout.video
+            radius=self.layout.px(label["point_radius"])+self.layout.px(label["point_outline"])
+            anchor=(max(self.layout.px(vx)+radius,min(self.layout.px(vx+vw)-radius,anchor[0])),max(self.layout.px(vy)+radius,min(self.layout.px(vy+vh)-radius,anchor[1])))
+            # Pose/shot eligibility controls visibility. Geometry only selects
+            # the shot position; it never suppresses a label or its connection.
+            self.audit.setdefault("expected_labels", []).append({"slot":slot,"event":event["id"]})
             sprite = self.label_sprite(event, slot)
             if zoom < 1:
                 sprite = sprite.resize((round(sprite.width * zoom), round(sprite.height * zoom)), Image.Resampling.LANCZOS)
@@ -240,28 +268,21 @@ class Composer:
             start = (x + sprite.width if anchor[0] >= x+sprite.width/2 else x, y + round(body_height * zoom / 2))
             elbow = (round(start[0] + (anchor[0] - start[0]) * label["leader_fraction"]), start[1])
             rect=[x,y,x+sprite.width,y+sprite.height]
-            collisions=[zone["name"] for zone in self.audit["forbidden"] if intersects(rect,zone["rect"])]
-            collisions += ["label:"+other["slot"] for other in self.audit["labels"] if intersects(rect,other["rect"])]
-            if collisions:
-                self.audit.setdefault("suppressed_labels",[]).append({"slot":slot,"event":event["id"],"rect":rect,"zones":collisions,"fallback":bool(not placement or slot in placement.get("fallback_slots",[]))})
-                continue
             raw_xy=self.raw_anchors["head" if event.get("limb") in {"head","body"} else slot][point_index]
             real_anchor=self.layout.source_point(raw_xy[0]*self.layout.source[0],raw_xy[1]*self.layout.source[1]) if np.isfinite(raw_xy).all() else anchor
             real_start=(x+sprite.width if real_anchor[0]>=x+sprite.width/2 else x,start[1])
             real_elbow=(round(real_start[0]+(real_anchor[0]-real_start[0])*label["leader_fraction"]),real_start[1])
             path=[start,elbow,anchor]
             real_path=[real_start,real_elbow,real_anchor]
-            blocked_face=any(segment_intersects_rect(a,b,zone["rect"]) for points in (path,real_path) for a,b in zip(points,points[1:]) for zone in self.audit["leader_zones"] if zone["name"]=="face")
             color = (*tuple(int(self.c["lime"][i:i+2], 16) for i in (1, 3, 5)), round(255 * alpha))
             leader = Image.new("RGBA", image.size)
             ld = ImageDraw.Draw(leader)
-            if not blocked_face:
-                ld.line(path, fill=color, width=max(1, self.layout.px(label["leader_width"])), joint="curve")
+            ld.line(path, fill=color, width=max(1, self.layout.px(label["leader_width"])), joint="curve")
             radius = self.layout.px(label["point_radius"])
             ld.ellipse((anchor[0] - radius, anchor[1] - radius, anchor[0] + radius, anchor[1] + radius), fill=color, outline=self.c["ink"], width=max(1, self.layout.px(label["point_outline"])))
             image.alpha_composite(leader)
             image.alpha_composite(opacity(sprite, alpha), (x, y))
-            self.audit["labels"].append({"slot": slot, "event": event["id"], "rect": [x, y, x + sprite.width, y + sprite.height], "leader": [list(p) for p in path] if not blocked_face else [], "actual_hand_leader": [list(p) for p in real_path] if not blocked_face else [], "blocked_face_leader": blocked_face, "fallback": bool(not placement or slot in placement.get("fallback_slots",[]))})
+            self.audit["labels"].append({"slot": slot, "event": event["id"], "rect": [x, y, x + sprite.width, y + sprite.height], "leader": [list(p) for p in path], "actual_hand_leader": [list(p) for p in real_path], "point": list(anchor), "point_clamped": anchor != projected_anchor, "relaxed": bool(placement and placement["selected"][slot]["relaxed"]), "forced": bool(placement and placement["selected"][slot]["forced"]), "fallback": False})
 
     def forbidden(self, seconds: float) -> list[dict[str, Any]]:
         zones = []
@@ -269,8 +290,9 @@ class Composer:
         def zone(name: str, rect: Sequence[float]) -> None:
             zones.append({"name": name, "rect": list(self.layout.rect(rect))})
         index = min(len(self.points["pose"])-1, max(0, round(seconds*float(self.points.get("fps",30)))))
-        for name, (x0,y0,x1,y1) in body_zones(np.asarray(self.points["pose"])[index], self.layout.source, self.visibility).items():
-            if name != "hands":
+        for name, value in body_zones(np.asarray(self.points["pose"])[index], self.layout.source, self.visibility).items():
+            if name == "face":
+                x0,y0,x1,y1=value
                 zones.append({"name": name, "rect": list(self.layout.source_rect((x0,y0,x1-x0,y1-y0)))})
         ratio = self.settings["subtitle_exclusion_ratio"]
         if self.layout.strip_video:
@@ -352,7 +374,11 @@ class Composer:
         if self.reframe_plan.get("enabled"):
             self.layout=replace(self.layout,crop=crop_at(self.reframe_plan,seconds))
         self.audit = {"seconds": seconds, "output": list(self.layout.output), "labels": [], "forbidden": self.forbidden(seconds)}
-        self.audit["leader_zones"] = [zone for zone in self.audit["forbidden"] if zone["name"] in {"face", "torso"}]
+        cores = body_zones(np.asarray(self.points["pose"])[point_index], self.layout.source, self.visibility)
+        face = cores.get("face_raw")
+        self.audit["leader_zones"] = [{"name":"face","rect":list(self.layout.source_rect((face[0],face[1],face[2]-face[0],face[3]-face[1])))}] if face else []
+        self.audit["midline"] = self.layout.source_point(cores["midline"],0)[0] if "midline" in cores else None
+        self.audit["endpoint_exemption"] = self.layout.px(60)
         source = blur_frame(source, self.blur, self.layout.source, self.settings["blur_radius"])
         original_source=source
         if self.layout.crop:

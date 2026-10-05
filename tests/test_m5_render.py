@@ -51,7 +51,7 @@ def test_cut_clears_old_labels_and_card_moves_only_at_boundary():
     assert painter.card_x(2.5)==32
     source=Image.new("RGB",(1280,720))
     painter.frame(source,1.2,36)
-    assert painter.audit["labels"]==[]
+    assert [label["event"] for label in painter.audit["labels"]]==["new"]
     painter.frame(source,1.5,45)
     assert [label["event"] for label in painter.audit["labels"] + painter.audit.get("suppressed_labels",[])]==["new"]
     assert all(label["event"] != "old" for label in painter.audit["labels"])

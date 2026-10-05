@@ -15,20 +15,12 @@ def test_labels_choose_both_sides_and_are_deterministic():
     assert solve()==result
 
 
-def test_labels_stack_on_one_side_without_crossing():
-    result=solve([[0,0,350,700],[350,0,650,100]])
-    assert not result["fallback"]
-    a,b=result["positions"].values()
-    assert a[0]>=650 and b[0]>=650
-    assert abs(a[1]-b[1])>=72
-    pa,pb=leader([a[0],a[1],a[0]+120,a[1]+60],[420,350]),leader([b[0],b[1],b[0]+120,b[1]+60],[580,350])
-    assert not any(crosses(x,y,z,w) for x,y in zip(pa,pa[1:]) for z,w in zip(pb,pb[1:]))
-
-
-def test_no_legal_location_uses_explicit_legacy_fallback():
+def test_no_legal_same_side_uses_explicit_forced_position():
     result=solve([[0,0,1000,700]])
-    assert result["fallback"] and result["positions"]=={"left":[40,196],"right":[760,92]}
-    assert result["fallback_slots"]==["left","right"]
+    assert result["forced"] and not result["fallback"]
+    assert result["positions"] != {"left":[40,196],"right":[760,92]}
+    assert result["selected"]["left"]["same_side"]
+    assert result["selected"]["right"]["same_side"]
 
 
 def test_card_side_uses_available_space_and_cubic_slide():

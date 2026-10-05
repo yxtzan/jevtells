@@ -37,11 +37,46 @@ def segment_intersects_rect(a: Sequence[float], b: Sequence[float], rect: Sequen
     return True
 
 
+def outside_endpoint(path: Sequence[Sequence[float]], radius: float) -> list[tuple]:
+    """Keep only segment portions outside the hand's circular exemption."""
+    import math
+    if not path:
+        return []
+    hand = path[-1]
+    pieces = []
+    for a, b in zip(path, path[1:]):
+        dx, dy = b[0]-a[0], b[1]-a[1]
+        ax, ay = a[0]-hand[0], a[1]-hand[1]
+        aa = dx*dx+dy*dy
+        roots = [0., 1.]
+        if aa:
+            bb, cc = 2*(ax*dx+ay*dy), ax*ax+ay*ay-radius*radius
+            disc = bb*bb-4*aa*cc
+            if disc >= 0:
+                roots += [t for t in ((-bb-math.sqrt(disc))/(2*aa),(-bb+math.sqrt(disc))/(2*aa)) if 0 < t < 1]
+        roots.sort()
+        for lo, hi in zip(roots, roots[1:]):
+            mid = (lo+hi)/2
+            if (ax+mid*dx)**2+(ay+mid*dy)**2 >= radius*radius-1e-8:
+                pieces.append(((a[0]+lo*dx,a[1]+lo*dy),(a[0]+hi*dx,a[1]+hi*dy)))
+    return pieces
+
+
+def line_flags(path, face, midline, radius=60):
+    pieces = outside_endpoint(path, radius)
+    face_hit = bool(face and any(segment_intersects_rect(a,b,face) for a,b in pieces))
+    mid_hit = midline is not None and any((a[0]-midline)*(b[0]-midline) < 0 for a,b in pieces)
+    return face_hit, mid_hit
+
+
 def leader_violations(frame: Mapping[str, Any]) -> list[dict[str, Any]]:
     failures = []
+    face = next((z['rect'] for z in frame.get('leader_zones', []) if z['name']=='face'), None)
     for label in frame.get('labels', []):
         path = label.get('actual_hand_leader', label.get('leader', []))
-        for zone in frame.get('leader_zones', []):
-            if any(segment_intersects_rect(a, b, zone['rect']) for a, b in zip(path, path[1:])):
-                failures.append({'slot': label['slot'], 'event': label['event'], 'zone': zone['name']})
+        face_hit, mid_hit = line_flags(path, face, frame.get('midline'), frame.get('endpoint_exemption',0))
+        if face_hit:
+            failures.append({'slot':label['slot'],'event':label['event'],'zone':'face'})
+        if mid_hit:
+            failures.append({'slot':label['slot'],'event':label['event'],'zone':'midline'})
     return failures

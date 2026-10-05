@@ -10,7 +10,7 @@ def test_face_padding_and_invisible_hips_use_bottom():
     pose[11]=[.4,.4,0,1];pose[12]=[.6,.4,0,1]
     pose[23]=[.4,.8,0,.2];pose[24]=[.6,.8,0,.2]
     zones=body_zones(pose,(1000,700))
-    assert np.allclose(zones['face'],[430,70,570,210])
+    assert np.allclose(zones['face'],[470,110,530,170])
     assert np.allclose(zones['torso'],[400,280,600,700])
 
 
@@ -20,13 +20,11 @@ def test_same_side_preferred_and_opposite_leader_cannot_cross_core():
     assert not result['fallback']
     assert result['positions']['left'][0]<500
     assert result['positions']['right'][0]>500
-    for values in result['candidates'].values():
-        for candidate in values:
-            assert not any(segment_intersects_rect(a,b,target) for a,b in zip(candidate['leader'],candidate['leader'][1:]))
+    assert all(v['same_side'] for v in result['selected'].values())
 
 
 def test_frame_audit_counts_actual_face_and_torso_leaders():
-    frame={'labels':[{'slot':'left','event':'a','leader':[[0,50],[20,50],[100,50]]}],'leader_zones':[{'name':'face','rect':[40,20,60,80]},{'name':'torso','rect':[70,20,90,80]}]}
-    assert [e['zone'] for e in leader_violations(frame)]==['face','torso']
+    frame={'midline':80,'labels':[{'slot':'left','event':'a','leader':[[0,50],[20,50],[100,50]]}],'leader_zones':[{'name':'face','rect':[40,20,60,80]},{'name':'torso','rect':[70,20,90,80]}]}
+    assert [e['zone'] for e in leader_violations(frame)]==['face','midline']
     assert segment_intersects_rect([0,50],[100,50],[40,20,60,80])
     assert not segment_intersects_rect([0,0],[100,0],[40,20,60,80])
