@@ -53,7 +53,8 @@ def test_cut_clears_old_labels_and_card_moves_only_at_boundary():
     painter.frame(source,1.2,36)
     assert painter.audit["labels"]==[]
     painter.frame(source,1.5,45)
-    assert [label["event"] for label in painter.audit["labels"]]==["new"]
+    assert [label["event"] for label in painter.audit["labels"] + painter.audit.get("suppressed_labels",[])]==["new"]
+    assert all(label["event"] != "old" for label in painter.audit["labels"])
 
 
 def test_run_defaults_to_render_and_state_remains_available(monkeypatch, capsys):

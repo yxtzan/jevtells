@@ -88,5 +88,10 @@ def select_positions(video: Sequence[float], target: Sequence[float] | None, for
         for slot in choices:
             side = "left" if anchors[slot][0] <= anchors["right" if slot == "left" else "left"][0] else "right"
             fixed[slot] = list(fallback[side])
-        result.update({"positions": fixed, "fallback": True, "reason": "no noncrossing legal pair", "fallback_slots": ["left","right"]})
+        positions = {slot: values[0]["position"] if values else fixed[slot] for slot,values in choices.items()}
+        fallback_slots = [slot for slot,values in choices.items() if not values]
+        if not fallback_slots:
+            positions = fixed
+            fallback_slots = ["left", "right"]
+        result.update({"positions": positions, "fallback": True, "reason": "no noncrossing legal pair", "fallback_slots": fallback_slots})
     return result

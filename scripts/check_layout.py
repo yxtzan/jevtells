@@ -19,7 +19,7 @@ def check(directory: Path, kind: str) -> dict:
     if not capture.isOpened():
         raise RuntimeError(f"cannot decode {video}")
     total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
-    result = {"layout": kind, "video": str(video), "frames": total, "checked_frames": 0, "visible_label_frames": 0, "violation_frames": 0, "nonfallback_violation_frames": 0, "fallback_frames": 0, "fallback_violation_frames": 0, "examples": [], "leader_face_frames": 0, "leader_torso_frames": 0, "leader_examples": []}
+    result = {"layout": kind, "video": str(video), "frames": total, "checked_frames": 0, "visible_label_frames": 0, "violation_frames": 0, "nonfallback_violation_frames": 0, "fallback_frames": 0, "fallback_violation_frames": 0, "examples": [], "leader_face_frames": 0, "leader_torso_frames": 0, "leader_examples": [], "suppressed_label_frames": 0, "blocked_face_leader_frames": 0}
     try:
         with trace.open() as handle:
             for index, line in enumerate(handle):
@@ -33,6 +33,8 @@ def check(directory: Path, kind: str) -> dict:
                 result["leader_torso_frames"] += any(item["zone"] == "torso" for item in crossing)
                 if crossing and len(result["leader_examples"]) < 30:
                     result["leader_examples"].append({"frame":index,"seconds":frame["seconds"],"failures":crossing})
+                result["suppressed_label_frames"] += bool(frame.get("suppressed_labels"))
+                result["blocked_face_leader_frames"] += any(label.get("blocked_face_leader") for label in frame["labels"])
                 result["checked_frames"] += 1
                 result["visible_label_frames"] += bool(frame["labels"])
                 result["fallback_frames"] += any(label.get("fallback") for label in frame["labels"])

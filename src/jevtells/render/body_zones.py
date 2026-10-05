@@ -28,7 +28,7 @@ def body_zones(pose: np.ndarray, source: tuple[int, int], visibility: float = .5
     bounds('face', xy[:, :11], .35 * shoulder)
     shoulders = xy[:, [11, 12]].reshape(-1, 2)
     shoulders = shoulders[np.isfinite(shoulders).all(axis=1)]
-    if len(shoulders):
+    if len(shoulders) and np.ptp(shoulders[:, 0]) > 1:
         hips = xy[:, [23, 24]].reshape(-1, 2)
         hips = hips[np.isfinite(hips).all(axis=1)]
         result['torso'] = [float(np.min(shoulders[:, 0])), float(np.min(shoulders[:, 1])), float(np.max(shoulders[:, 0])), float(np.max(hips[:, 1])) if len(hips) else float(source[1])]

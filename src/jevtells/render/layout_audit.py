@@ -40,7 +40,7 @@ def segment_intersects_rect(a: Sequence[float], b: Sequence[float], rect: Sequen
 def leader_violations(frame: Mapping[str, Any]) -> list[dict[str, Any]]:
     failures = []
     for label in frame.get('labels', []):
-        path = label.get('leader', [])
+        path = label.get('actual_hand_leader', label.get('leader', []))
         for zone in frame.get('leader_zones', []):
             if any(segment_intersects_rect(a, b, zone['rect']) for a, b in zip(path, path[1:])):
                 failures.append({'slot': label['slot'], 'event': label['event'], 'zone': zone['name']})
