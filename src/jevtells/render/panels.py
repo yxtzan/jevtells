@@ -39,6 +39,25 @@ class Panels:
             for name in ("quote_y", "metrics_y", "lower_y"):
                 self.p[name] += delta
             self.commentary.cache_clear()
+            self.p["choice_top"] = max(6, self.p["choice_top"])
+            self.p["choice_bottom"] = max(8, self.p["choice_bottom"])
+            self.p["arc_top"] = max(8, self.p["arc_top"])
+            # Render every content block once to measure glyphs, probability
+            # rows and wrapped legends, rather than guessing their heights.
+            content_bottom = 0.0
+            for index in range(len(windows)):
+                sample = self.canvas()
+                self._choices(sample, index)
+                self._metrics(sample, index, 1.0)
+                box = sample.getbbox()
+                if box:
+                    content_bottom = max(content_bottom, box[3]/layout.scale)
+            free = max(0.0, self.p["footer"][1] - content_bottom)
+            extra = min(32.0, free/3)
+            self.p["metrics_y"] += extra
+            self.p["lower_y"] += 2*extra
+            self.spacing = {"maximum_content_bottom": content_bottom, "free_height": free, "added_per_gap": extra, "remaining_bottom": free-3*extra}
+
         self.base = self._base()
 
     def canvas(self) -> Image.Image:
