@@ -83,3 +83,12 @@ def test_partial_edge_people_allow_full_right_card():
                        points,[],{},{},{},title='Title',sources='Source',lang='zh',blur=[],subtitles=False,config=config,shots=shots)
     assert painter.card_modes[1] == 'full' and painter.card_sides[1] == 'right'
     assert painter.card_face_collisions[1] == {'right':0,'left':0}
+
+
+def test_actions_discard_only_onsets_inside_cut_settling_period():
+    from jevtells.stages.actions import discard_after_cuts
+    events = [{'t0':t,'t1':t+.5,'type':'beat'} for t in [3.9,4,4.1,4.3,5]]
+    kept,discarded = discard_after_cuts(events,[4],.3)
+    assert [e['t0'] for e in kept] == [3.9,4.3,5]
+    assert [e['t0'] for e in discarded] == [4,4.1]
+    assert all(e['reason']=='settling_after_cut' and e['cut_seconds']==4 for e in discarded)
