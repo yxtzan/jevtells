@@ -458,7 +458,7 @@ class Composer:
         x, y, width, height = self.layout.video
         image = Image.new("RGBA", self.layout.output, self.c["ink"])
         image.paste(source.resize((self.layout.px(width), self.layout.px(height)), Image.Resampling.BICUBIC), self.layout.point(x, y))
-        if self.layout.strip_video and self.layout.strip_y is not None:
+        if self.layout.strip_video and self.layout.strip_y is not None and self.layout.px(self.layout.strip_video[3]) > 0 and round(self.layout.strip_y*original_source.height/self.layout.source[1]) < original_source.height:
             sy=original_source.height/self.layout.source[1]
             strip=original_source.crop((0,round(self.layout.strip_y*sy),original_source.width,original_source.height))
             sx,sy,sw,sh=self.layout.strip_video

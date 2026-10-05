@@ -92,3 +92,48 @@ def test_actions_discard_only_onsets_inside_cut_settling_period():
     assert [e['t0'] for e in kept] == [3.9,4.3,5]
     assert [e['t0'] for e in discarded] == [4,4.1]
     assert all(e['reason']=='settling_after_cut' and e['cut_seconds']==4 for e in discarded)
+
+
+def test_short_interjection_keeps_rendered_card_and_commentary():
+    import copy
+    from PIL import Image
+    from jevtells.config import load_config
+    from jevtells.stages.segment import merge_short_windows
+    from jevtells.render.geometry import Layout
+    from jevtells.render.renderer import Composer
+    cfg = load_config(); settings = copy.deepcopy(cfg['render'])
+    rows = merge_short_windows([{'t0':0,'t1':3,'subtitle':'主角原话'},
+                               {'t0':3,'t1':3.4,'subtitle':'是','speaker_other':True},
+                               {'t0':3.4,'t1':6,'subtitle':'主角续话'}],cfg)
+    pose = person();pose[11,0] = .4;pose[12,0] = .6
+    points = {'pose':np.array([pose]*180),'fps':30,'hands':np.full((180,2,21,3),np.nan)}
+    judgments = {'W00':{'scores':{k:{'value':.6} for k in ['confidence','focus','tension']}}}
+    painter = Composer(settings,Layout.create('h',settings,(1280,720)),rows,points,[],judgments,
+                       {'W00':{'line':'原解说保持显示','quote':'主角原话'}},{},title='Title',sources='Source',
+                       lang='zh',blur=[],subtitles=False,config=cfg)
+    first = painter.frame(Image.new('RGB',(1280,720)),2.9,87)
+    held = painter.frame(Image.new('RGB',(1280,720)),3.2,96)
+    assert painter.audit['cards'][0]['mode'] == 'full'
+    assert first.crop((0,0,1450,150)).tobytes() == held.crop((0,0,1450,150)).tobytes()
+    assert first.crop((1450,230,1900,750)).tobytes() == held.crop((1450,230,1900,750)).tobytes()
+
+
+def test_zoom_strip_subpixel_start_renders_without_zero_size_resize():
+    import copy
+    from PIL import Image
+    from jevtells.config import load_config
+    from jevtells.render.geometry import Layout
+    from jevtells.render.renderer import Composer
+    from jevtells.render.reframe import plan_crops
+    cfg = load_config(); settings = copy.deepcopy(cfg['render'])
+    settings['v'].update(settings['v_reframe'])
+    pose = person();points = {'pose':np.array([pose]*120),'fps':30,'hands':np.full((120,2,21,3),np.nan)}
+    shots = [{'index':1,'t0':0,'t1':2,'multi_person':True,'far':True},
+             {'index':2,'t0':2,'t1':4,'multi_person':False,'far':True}]
+    plan = plan_crops(1280,720,shots,points,None,settings['reframe'])
+    plan.update(mode='strip',strip_y=576);plan['shots'][1]['height'] = 576
+    painter = Composer(settings,Layout.create('v',settings,(1280,720)),[{'id':'W0','t0':0,'t1':4}],
+                       points,[],{},{},{},title='Title',sources='Source',lang='zh',blur=[],subtitles=False,
+                       config=cfg,shots=shots,reframe_plan=plan)
+    image = painter.frame(Image.new('RGB',(1280,720)),2+1/30,61)
+    assert image.size == (1080,1440)
