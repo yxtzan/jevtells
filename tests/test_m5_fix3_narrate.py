@@ -47,7 +47,6 @@ def test_second_truncation_is_never_accepted_or_retried_indefinitely(tmp_path):
         requests.append(json.loads(body))
         return 200, response("length")
     result = run({"W0": {"subtitle": {"current": "hello world"}}}, {}, tmp_path,
-                 config={"narrate": {"validation_retries": 0}},
                  client=OpenRouterClient(api_key="secret", transport=transport))
     assert len(requests) == 2 and result["W0"] is None
     meta = json.loads((tmp_path / "narrate_meta.json").read_text())

@@ -159,7 +159,8 @@ def run(states: Mapping[str, Any] | None, judgments: Mapping[str, Any] | None, o
                 stats["completion_tokens"] += int(usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0)
                 details = usage.get("completion_tokens_details") or {}
                 reasoning_tokens = details.get("reasoning_tokens")
-                stats["reasoning_tokens"] += int(reasoning_tokens or 0)
+                stats["reasoning_tokens"] = (None if reasoning_tokens is None or stats["reasoning_tokens"] is None
+                                             else stats["reasoning_tokens"] + int(reasoning_tokens))
                 finish_reasons = [choice.get("finish_reason") for choice in raw.get("choices", [])]
                 cost = response.get("cost")
                 stats["response_records"].append({"call": stats["calls"], "validation_attempt": attempt, "length_attempt": length_attempt, "max_tokens": request_max_tokens, "reasoning_tokens": reasoning_tokens, "finish_reason": finish_reasons[0] if finish_reasons else None, "finish_reasons": finish_reasons, "cost": cost, "raw_path": str(raw_path)})
@@ -183,6 +184,10 @@ def run(states: Mapping[str, Any] | None, judgments: Mapping[str, Any] | None, o
                 save(error=True)
                 raise
             save()
+            break
+        if "length" in finish_reasons:
+            # The doubled-limit retry also truncated. Do not restart this
+            # same generation at the original limit in a validation round.
             break
         failures = {}
         fixed = dict(accepted)
