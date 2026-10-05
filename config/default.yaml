@@ -120,6 +120,7 @@ shots:
   far_shoulder_ratio: 0.15
   target_presence_ratio: 0.50
   min_target_height_ratio: 0.25
+  person_edge_margin: 0.02
   multi_height_ratio: 0.35
   multi_frame_ratio: 0.50
 

@@ -5,24 +5,39 @@ import numpy as np
 
 
 
-def multiple_people(poses: np.ndarray, settings: Mapping[str, Any]) -> dict[str, Any]:
+def person_mask(poses: np.ndarray, settings: Mapping[str, Any]) -> np.ndarray:
+    """Require an interior nose/eye and a sufficiently tall visible body."""
     poses = np.asarray(poses, dtype=float)
-    if poses.ndim != 4 or not len(poses):
-        return {'multi_person': False, 'multi_person_ratio': 0.}
-    valid = np.isfinite(poses[..., :2]).all(axis=-1)
+    if poses.ndim < 3 or poses.shape[-2] < 6:
+        return np.zeros(poses.shape[:-2], dtype=bool)
+    xy = poses[..., :2]
+    valid = np.isfinite(xy).all(axis=-1)
     if poses.shape[-1] >= 4:
         valid &= poses[..., 3] >= float(settings.get('visibility', .5))
-    y = poses[..., 1]
-    heights = np.max(np.where(valid, np.clip(y,0,1), -np.inf), axis=-1) - np.min(np.where(valid, np.clip(y,0,1), np.inf), axis=-1)
-    counts = np.sum(heights >= float(settings.get('multi_height_ratio', .35)), axis=1)
-    ratio = float(np.mean(counts >= 2))
+    margin = float(settings.get('person_edge_margin', .02))
+    interior = valid & (xy >= margin).all(axis=-1) & (xy <= 1-margin).all(axis=-1)
+    head = interior[..., 0] & (interior[..., 2] | interior[..., 5])
+    y = np.clip(xy[..., 1], 0, 1)
+    heights = np.max(np.where(valid, y, -np.inf), axis=-1) - np.min(np.where(valid, y, np.inf), axis=-1)
+    return head & (heights >= float(settings.get('multi_height_ratio', .35)))
+
+
+def people_counts(poses: np.ndarray, settings: Mapping[str, Any]) -> np.ndarray:
+    poses = np.asarray(poses, dtype=float)
+    return person_mask(poses, settings).sum(axis=1) if poses.ndim == 4 else np.array([], dtype=int)
+
+
+def multiple_people(poses: np.ndarray, settings: Mapping[str, Any]) -> dict[str, Any]:
+    counts = people_counts(poses, settings)
+    ratio = float(np.mean(counts >= 2)) if len(counts) else 0.
     return {'multi_person': ratio >= float(settings.get('multi_frame_ratio', .50)), 'multi_person_ratio': ratio}
 
 
-def faces_at(poses: np.ndarray, size: tuple[int, int], visibility: float, *, raw: bool = False) -> list[list[float]]:
+def faces_at(poses: np.ndarray, size: tuple[int, int], visibility: float, *, raw: bool = False, settings: Mapping[str, Any] | None = None) -> list[list[float]]:
     from ..render.body_zones import body_zones
     result = []
-    for pose in np.asarray(poses):
+    poses = np.asarray(poses)
+    for pose in poses[person_mask(poses, {**(settings or {}), "visibility": visibility})]:
         face = body_zones(pose, size, visibility).get('face_raw' if raw else 'face')
         if face:
             result.append(list(face))

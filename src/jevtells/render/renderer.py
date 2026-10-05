@@ -63,6 +63,7 @@ class Composer:
         self.label_cache: dict[tuple[str, str, float], Image.Image] = {}
         self.label_limits: dict[str, float] = {}
         self.subtitle_cache: dict[str, Image.Image] = {}
+        self.person_settings = config.get("shots", {})
         self.visibility = float(config.get("detection", {}).get("pose_visibility_threshold", 0.5))
         smoothing = config.get("smoothing", {})
         smooth_window, polynomial = int(smoothing.get("window_length", 7)), int(smoothing.get("polyorder", 2))
@@ -93,7 +94,7 @@ class Composer:
                 start,end=(round(float(shot[k])*float(points.get("fps",30))) for k in ("t0","t1"))
                 core=body_zones(pose[start:end],layout.source,self.visibility).get("torso",shot.get("target_box"))
                 self.card_sides[int(shot["index"])] = card_side(core,layout.source[0],self.p["card"][2]*layout.source[0]/layout.video[2],self.layout.px(settings.get("layout",{}).get("safe_margin",24))/layout.scale*layout.source[0]/layout.video[2])
-                faces = [face for frame in self.all_poses[start:end] for face in faces_at(frame, layout.source, self.visibility)]
+                faces = [face for frame in self.all_poses[start:end] for face in faces_at(frame, layout.source, self.visibility, settings=config.get("shots", {}))]
                 scores = {}
                 for side, x in (("right",self.p["card"][0]),("left",settings["layout"]["card_left_x"])):
                     rect = layout.rect((x,*self.p["card"][1:]))
@@ -151,7 +152,7 @@ class Composer:
             frame_core = body_zones(np.asarray(self.points["pose"])[index], self.layout.source, self.visibility)
             face = frame_core.get("face_raw")
             face = list(self.layout.source_rect((face[0],face[1],face[2]-face[0],face[3]-face[1]))) if face else None
-            faces = [list(self.layout.source_rect((f[0],f[1],f[2]-f[0],f[3]-f[1]))) for f in faces_at(self.all_poses[index],self.layout.source,self.visibility,raw=True)]
+            faces = [list(self.layout.source_rect((f[0],f[1],f[2]-f[0],f[3]-f[1]))) for f in faces_at(self.all_poses[index],self.layout.source,self.visibility,raw=True,settings=self.person_settings)]
             mid = self.layout.source_point(frame_core.get("midline", self.layout.source[0]/2), 0)[0]
             wi, _ = window_at(self.windows, seconds)
             lost = not np.isfinite(np.asarray(self.points["pose"])[index,:,:2]).any()
@@ -354,7 +355,7 @@ class Composer:
         def zone(name: str, rect: Sequence[float]) -> None:
             zones.append({"name": name, "rect": list(self.layout.rect(rect))})
         index = min(len(self.points["pose"])-1, max(0, round(seconds*float(self.points.get("fps",30)))))
-        for face_index, value in enumerate(faces_at(self.all_poses[index], self.layout.source, self.visibility)):
+        for face_index, value in enumerate(faces_at(self.all_poses[index], self.layout.source, self.visibility, settings=self.person_settings)):
             x0,y0,x1,y1=value
             zones.append({"name": "face" if face_index==0 else f"face:{face_index}", "rect": list(self.layout.source_rect((x0,y0,x1-x0,y1-y0)))})
         ratio = self.settings["subtitle_exclusion_ratio"]
@@ -439,7 +440,7 @@ class Composer:
         self.audit = {"seconds": seconds, "output": list(self.layout.output), "labels": [], "forbidden": self.forbidden(seconds)}
         cores = body_zones(np.asarray(self.points["pose"])[point_index], self.layout.source, self.visibility)
         face = cores.get("face_raw")
-        self.audit["leader_zones"] = [{"name":"face","rect":list(self.layout.source_rect((f[0],f[1],f[2]-f[0],f[3]-f[1])))} for f in faces_at(self.all_poses[point_index], self.layout.source, self.visibility, raw=True)]
+        self.audit["leader_zones"] = [{"name":"face","rect":list(self.layout.source_rect((f[0],f[1],f[2]-f[0],f[3]-f[1])))} for f in faces_at(self.all_poses[point_index], self.layout.source, self.visibility, raw=True, settings=self.person_settings)]
         self.audit["midline"] = self.layout.source_point(cores["midline"],0)[0] if "midline" in cores else None
         self.audit["endpoint_exemption"] = self.layout.px(60)
         source = blur_frame(source, self.blur, self.layout.source, self.settings["blur_radius"])
