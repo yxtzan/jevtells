@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any, Mapping
 import numpy as np
 
-from ..render.body_zones import body_zones
 
 
 def multiple_people(poses: np.ndarray, settings: Mapping[str, Any]) -> dict[str, Any]:
@@ -21,6 +20,7 @@ def multiple_people(poses: np.ndarray, settings: Mapping[str, Any]) -> dict[str,
 
 
 def faces_at(poses: np.ndarray, size: tuple[int, int], visibility: float, *, raw: bool = False) -> list[list[float]]:
+    from ..render.body_zones import body_zones
     result = []
     for pose in np.asarray(poses):
         face = body_zones(pose, size, visibility).get('face_raw' if raw else 'face')

@@ -35,6 +35,9 @@ scores:
   focus: 专注
   tension: 紧张
 ui:
+  unclear: 不明显
+  unjudged: 未判定
+  offscreen_short: 主角不在画面
   disclaimer: 未经人工校准 · 仅供演示
   source: 来源：JevTells + OpenRouter
   unknown: 未知

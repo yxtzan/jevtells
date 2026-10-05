@@ -100,6 +100,9 @@ def plan_crops(width: int, height: int, shots: Sequence[Mapping[str, Any]], poin
     fps=float(points.get("fps",30));pose=np.asarray(points.get("pose",[]),dtype=float)
     timeline=[]
     for shot in shots:
+        if shot.get("multi_person"):
+            timeline.append({"index":shot["index"],"t0":shot["t0"],"t1":shot["t1"],"left":0.,"width":width,"height":height,"pans":[],"multi_person":True})
+            continue
         left=crop_left(width,height,shot.get("target_center_x"),subtitles,float(settings.get("max_offset",.08)))
         pans=[];pending=None;current=left
         start,end=round(float(shot["t0"])*fps),min(len(pose),round(float(shot["t1"])*fps))
