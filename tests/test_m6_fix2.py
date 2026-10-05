@@ -43,3 +43,27 @@ def test_zoom_eases_for_six_hundred_ms():
     assert widths[0] == 1280 and widths[-1] == 960
     assert widths == sorted(widths,reverse=True)
     assert widths[0]-widths[1] < widths[1]-widths[2]
+
+
+def test_short_windows_merge_only_within_speaker_and_presence_boundaries():
+    from jevtells.stages.segment import merge_short_windows
+    rows = [{'t0':0,'t1':.3,'subtitle':'对'}, {'t0':.3,'t1':3,'subtitle':'原文'},
+            {'t0':3,'t1':3.4,'subtitle':'是','speaker_other':True},
+            {'t0':3.4,'t1':4,'subtitle':'下句'}, {'t0':4,'t1':6,'subtitle':'末句'},
+            {'t0':6,'t1':6.2,'subtitle':'离画','target_offscreen':True}]
+    result = merge_short_windows(rows,{})
+    assert [w['subtitle'] for w in result] == ['对 原文','是','下句 末句','离画']
+    assert result[1]['hold_previous_panel'] and result[-1]['hold_previous_panel']
+    from jevtells.render.animation import panel_window_at
+    assert panel_window_at(result,3.2) == (0,False)
+    assert panel_window_at(result,3.5) == (2,False)
+
+
+def test_srt_does_not_merge_before_speaker_classification(tmp_path):
+    from jevtells.stages.segment import run, merge_short_windows
+    from jevtells.stages.speakers import mark_windows
+    transcript = {'subtitle_source':'srt','segments':[{'t0':0,'t1':.3,'text':'是'},{'t0':.3,'t1':2.6,'text':'原句'}]}
+    result = run(transcript,[],tmp_path)
+    result = merge_short_windows(mark_windows(result,[(0,.3)]),{})
+    assert len(result) == 2 and result[0]['speaker_other']
+

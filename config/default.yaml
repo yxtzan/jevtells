@@ -50,6 +50,7 @@ tracking:
   appearance_reference_stride: 3
 
 windows:
+  panel_hold_seconds: 1.0
   split_boundary_tolerance_frames: 0.5
   min_seconds: 2.0
   max_seconds: 5.0

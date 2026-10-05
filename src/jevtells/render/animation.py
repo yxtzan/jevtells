@@ -36,3 +36,14 @@ def commentary_at(index: int, elapsed: float, animation: Mapping[str, Any]) -> t
         return index - 1, max(0.0, 1 - elapsed / out), 0.0
     amount = progress(elapsed - out, float(animation["commentary_in_seconds"]))
     return index, amount, float(animation["commentary_offset"]) * (1 - amount)
+
+
+def panel_index(windows: Sequence[Mapping[str, Any]], index: int | None) -> int | None:
+    while index is not None and index > 0 and windows[index].get('hold_previous_panel'):
+        index -= 1
+    return index
+
+
+def panel_window_at(windows: Sequence[Mapping[str, Any]], seconds: float) -> tuple[int | None, bool]:
+    index,gap = window_at(windows,seconds)
+    return panel_index(windows,index),gap

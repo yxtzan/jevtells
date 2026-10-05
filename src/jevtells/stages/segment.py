@@ -25,7 +25,7 @@ def run(transcript: dict[str, Any], shots: list[dict[str, Any]], out: Path, forc
     for segment in transcript.get("segments", []):
         current = dict(segment)
         current["words"] = sorted(current.get("words") or [], key=lambda item: float(item["t0"]))
-        if normalized and transcript.get("subtitle_source") != "ocr":
+        if normalized and transcript.get("subtitle_source") not in {"ocr", "srt"}:
             last = normalized[-1]
             combined_duration = float(current["t1"]) - float(last["t0"])
             last_duration = float(last["t1"]) - float(last["t0"])
@@ -63,3 +63,37 @@ def run(transcript: dict[str, Any], shots: list[dict[str, Any]], out: Path, forc
             windows.append(Window(id="W00", index=0, t0=0.0, t1=duration, subtitle="", prev_subtitle="", kind="silence").model_dump())
     destination.write_text(json.dumps(windows, ensure_ascii=False, indent=2))
     return windows
+
+
+def merge_short_windows(windows: list[dict[str, Any]], config: dict[str, Any]) -> list[dict[str, Any]]:
+    """Merge only adjacent equal presence/speaker classes, retaining literal text."""
+    rows = [dict(w) for w in windows]
+    minimum = float(config_value(config, 'windows.min_seconds', 2.0))
+    maximum = float(config_value(config, 'windows.max_seconds', 5.0))
+    def category(w):
+        return bool(w.get('speaker_other')), bool(w.get('target_offscreen'))
+    index = 0
+    while index < len(rows):
+        if rows[index]['t1']-rows[index]['t0'] >= minimum:
+            index += 1
+            continue
+        neighbours = [j for j in (index-1,index+1) if 0 <= j < len(rows) and category(rows[j]) == category(rows[index])]
+        if not neighbours:
+            index += 1
+            continue
+        # Prefer a result within max_window, then the closest earlier window.
+        other = min(neighbours, key=lambda j: (max(rows[j]['t1'],rows[index]['t1'])-min(rows[j]['t0'],rows[index]['t0']) > maximum, abs(j-index), j))
+        a,b = sorted((index,other))
+        left,right = rows[a],rows[b]
+        duration_left, duration_right = left['t1']-left['t0'],right['t1']-right['t0']
+        left['t1'] = right['t1']
+        for field in ('subtitle','subtitle_translation'):
+            left[field] = ' '.join(v for v in (left.get(field,''),right.get(field,'')) if v)
+        if left.get('target_presence_ratio') is not None and right.get('target_presence_ratio') is not None:
+            left['target_presence_ratio'] = (duration_left*left['target_presence_ratio']+duration_right*right['target_presence_ratio'])/(duration_left+duration_right)
+        rows.pop(b)
+        index = max(0,a-1)
+    for index,row in enumerate(rows):
+        row.update(id=f'W{index:02d}', index=index, prev_subtitle=rows[index-1]['subtitle'] if index else '')
+        row['hold_previous_panel'] = bool(index and any(category(row)) and row['t1']-row['t0'] < float(config_value(config,'windows.panel_hold_seconds',1.0)))
+    return rows

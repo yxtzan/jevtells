@@ -53,6 +53,9 @@ def split_presence_changes(windows: Sequence[Mapping[str, Any]], shots: Sequence
             row.update(t0=a, t1=b)
             if len(edges) > 2 and words:
                 row['subtitle'] = ' '.join(str(word['w']) for word in words if a <= (float(word['t0']) + float(word['t1'])) / 2 < b)
+            if len(edges) > 2 and not words and not a <= (start+end)/2 < b:
+                row['subtitle'] = ''
+                row['subtitle_translation'] = ''
             result.append(row)
     for index, row in enumerate(result):
         row.update(id=f'W{index:02d}', index=index, prev_subtitle=result[index-1]['subtitle'] if index else '')

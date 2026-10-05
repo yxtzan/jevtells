@@ -9,7 +9,7 @@ from PIL import Image, ImageColor, ImageDraw
 
 from ..stages.narrate_facts import SCORE_IDS, score_value
 from ..stages.certainty import uncertain
-from .animation import interpolate, progress
+from .animation import interpolate, progress, panel_index
 from .geometry import Layout
 from .text import Fonts, draw_fitted, spaced_text
 
@@ -287,7 +287,7 @@ class Panels:
         window = self.windows[index]
         identifier = str(window["id"])
         judgment = self.judgments.get(identifier)
-        previous = self.judgments.get(str(self.windows[index - 1]["id"])) if index else None
+        previous = self.judgments.get(str(self.windows[panel_index(self.windows,index - 1)]["id"])) if index else None
         amount = progress(elapsed, self.settings["animation"]["number_seconds"])
         for key, (x, y, width) in zip(SCORE_IDS, self.metric_boxes()):
             new, old = score_value(judgment, key), score_value(previous, key)

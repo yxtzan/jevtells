@@ -291,7 +291,7 @@ def main() -> None:
 
     def force_stage(stage: str) -> bool:
         rerun_from = arguments.from_stage
-        return bool(arguments.force or (rerun_from and _STAGE_ORDER.index(stage) >= _STAGE_ORDER.index(rerun_from)) or (targets_changed and stage in _TARGET_STAGES) or (others_changed and stage in {"judge", "narrate", "render"}) or (subtitle_changed and stage in {"segment", "actions", "scene", "state", "debug", "judge", "narrate", "render"}))
+        return bool(arguments.force or (rerun_from and _STAGE_ORDER.index(stage) >= _STAGE_ORDER.index(rerun_from)) or (targets_changed and stage in _TARGET_STAGES) or (others_changed and stage in {"actions", "state", "debug", "judge", "narrate", "render"}) or (subtitle_changed and stage in {"segment", "actions", "scene", "state", "debug", "judge", "narrate", "render"}))
 
     started = time.perf_counter()
     stage_times: dict[str, float] = {}
@@ -400,7 +400,10 @@ def main() -> None:
     windows = _invoke(segment.run, transcript, shot_list, output, force_stage("segment"), config=config)
     from .stages.presence import split_presence_changes
     marked = split_presence_changes(windows, shot_list, points, transcript, config)
+    from .stages.speakers import split_speaker_changes
+    marked = split_speaker_changes(marked, intervals, transcript, config)
     marked = mark_windows(marked, intervals, float(config.get("other_speaker_overlap", 0.5)))
+    marked = segment.merge_short_windows(marked, config)
     others_changed = marked != previous_windows
     if marked != windows:
         windows = marked

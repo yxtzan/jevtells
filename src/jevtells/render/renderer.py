@@ -23,7 +23,7 @@ from ..stages.prepare import _ffmpeg
 from ..stages.framing import faces_at
 from ..stages.certainty import uncertain
 from ..stages.narrate_facts import score_value
-from .animation import commentary_at, ease_in_out_cubic, progress, window_at
+from .animation import commentary_at, ease_in_out_cubic, progress, window_at, panel_index, panel_window_at
 from .geometry import Layout
 from .labels import schedule
 from .panels import Panels, opacity
@@ -214,7 +214,7 @@ class Composer:
 
     def card_state(self, seconds: float) -> tuple[str, tuple[float, float, float, float]]:
         shot = next((s for s in self.shots if float(s["t0"]) <= seconds < float(s["t1"])), self.shots[-1])
-        wi, gap = window_at(self.windows, seconds)
+        wi, gap = panel_window_at(self.windows, seconds)
         window = self.windows[wi] if wi is not None else {}
         mode = "collapsed" if wi is None or gap or window.get("speaker_other") or window.get("target_offscreen") else self.card_modes.get(int(shot["index"]), "full")
         x, y, width, height = self.p["card"]
@@ -462,7 +462,7 @@ class Composer:
             sx,sy,sw,sh=self.layout.strip_video
             image.paste(strip.resize((self.layout.px(sw),self.layout.px(sh)),Image.Resampling.BICUBIC),self.layout.point(sx,sy))
         image.alpha_composite(self.panels.base)
-        index, gap = window_at(self.windows, seconds)
+        index, gap = panel_window_at(self.windows, seconds)
         attenuation = self.settings["gap_opacity"] if gap else 1.0
         if index is not None:
             elapsed = seconds - float(self.windows[index]["t0"])
@@ -473,7 +473,7 @@ class Composer:
                 self.audit["cards"] = [{"mode":mode,"rect":list(self.layout.rect(rect))}]
                 compact = self.compact_card(index,mode,rect) if mode != "full" else None
                 duration = float(self.settings["animation"].get("card_collapse_seconds", .3))
-                before = self.windows[index-1] if index else self.windows[index]
+                before = self.windows[panel_index(self.windows,index-1)] if index else self.windows[index]
                 was_collapsed = bool(before.get("speaker_other") or before.get("target_offscreen"))
                 changed = (mode == "collapsed") != was_collapsed
                 if changed and elapsed < duration and self.card_modes.get(int(next(s for s in self.shots if s["t0"]<=seconds<s["t1"])["index"])) != "mini":
@@ -501,6 +501,7 @@ class Composer:
                 image.alpha_composite(analysis)
             animation = self.settings["animation"]
             sentence, amount, offset = commentary_at(index, elapsed, animation)
+            sentence = panel_index(self.windows,sentence)
             image.alpha_composite(opacity(self.panels.quote(sentence), amount * attenuation))
             layer, position = self.panels.commentary(sentence)
             position = (position[0], position[1] + self.layout.px(offset))
