@@ -43,6 +43,18 @@ clips:
     group: holdout
     parameters:
       speaker: Jensen Huang
-      target: ['1@0', '1@5', '1@10']
+      target: ['1@0']
       subtitles: 'off'
     notes: Spatial cuts at 5 and 10 seconds; illustrative holdout group only.
+  - id: tim_interview
+    input: samples/tim_interview.mov
+    group: tune
+    parameters:
+      duration: 52
+      speaker: Tim
+      target: ['1@0', '1@2', '1@4.1', '1@15.8', '1@25.6']
+      others_speaking: ['0-4.0', '10.16-15.24', '18.62-21.26', '24.04-25.24']
+      blur: ['15,15,250,60']
+      subtitles: 'off'
+      title: 'AI 读 Tim'
+    notes: Real interview; host speech boundaries checked against word timestamps and burned captions. First exchange conservatively excluded.

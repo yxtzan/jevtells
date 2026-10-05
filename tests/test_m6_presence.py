@@ -57,3 +57,23 @@ def test_offscreen_window_makes_no_judge_or_narration_request(tmp_path,other):
 def test_offscreen_message_available_in_both_languages():
     assert load_translations('zh')['ui']['target_offscreen']=='（主角不在画面，本句不做判定）'
     assert load_translations('en')['ui']['target_offscreen']=='(Target offscreen; no judgment)'
+
+
+@pytest.mark.parametrize('lang',['zh','en'])
+@pytest.mark.parametrize('other',[False,True])
+def test_rendered_offscreen_message_is_gray_and_other_speaker_wins(monkeypatch,lang,other):
+    from jevtells.config import load_config
+    from jevtells.render.geometry import Layout
+    from jevtells.render.text import Fonts
+    from jevtells.render import panels as module
+    settings=load_config()['render'];layout=Layout.create('h',settings,(1280,720))
+    tr=load_translations(lang)
+    windows=[{'id':'W00','t0':0,'t1':2,'target_offscreen':True,'speaker_other':other}]
+    panels=module.Panels(settings,layout,Fonts(settings,layout.scale),tr,windows,{'W00':None},{'W00':None},'Target','Source')
+    seen=[];original=module.draw_fitted
+    def capture(image,position,fitted,*args,**kwargs):
+        seen.append((''.join(fitted.lines),kwargs.get('fill')))
+        return original(image,position,fitted,*args,**kwargs)
+    monkeypatch.setattr(module,'draw_fitted',capture)
+    panels.commentary(0)
+    assert (tr['ui']['other_speaker' if other else 'target_offscreen'],settings['colors']['muted']) in seen
