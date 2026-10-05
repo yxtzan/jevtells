@@ -74,3 +74,15 @@ facts:
     small: 小
     medium: 中
     large: 大
+
+narration:
+  delta_strong_up: 明显上升
+  delta_strong_down: 明显下降
+  delta_up: 有所上升
+  delta_down: 有所下降
+  highest: 升至全场最高
+  lowest: 降至全场最低
+  rising: 持续走高
+  falling: 持续走低
+  transition: 转为{label}
+  fallback: '{intent}，语气{emotion}'

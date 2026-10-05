@@ -141,6 +141,38 @@ def compute_highlights(judgments: Mapping[str, Any], windows: Sequence[Mapping[s
     return result
 
 
+def verbal_highlights(highlights: Sequence[str], lang: str = "zh") -> list[str]:
+    """Translate measured changes into number-free overlay wording."""
+    import re
+    tr = load_translations(lang)
+    words = tr["narration"]
+    zh = load_translations("zh")
+    result = []
+    for item in highlights:
+        name = next((value for value in zh["facts"]["scores"].values() if item.startswith(value)), "")
+        if lang == "en" and name:
+            key = next(key for key, value in zh["facts"]["scores"].items() if value == name)
+            name = tr["facts"]["scores"][key] + " "
+        delta = re.search(r"比上一句 ([+-][0-9.]+)", item)
+        if delta:
+            value = float(delta[1])
+            key = "delta_" + ("strong_" if abs(value) + 1e-9 >= .10 else "") + ("up" if value > 0 else "down")
+            result.append(name + words[key])
+        elif "全场最高" in item:
+            result.append(name + words["highest"])
+        elif "全场最低" in item:
+            result.append(name + words["lowest"])
+        elif "持续走" in item:
+            result.append(name + words["rising" if "走高" in item else "falling"])
+        elif "转为「" in item:
+            label = item.split("转为「", 1)[1].split("」", 1)[0]
+            category = "intents" if item.startswith("意图") else "emotions"
+            if lang == "en":
+                label = next((tr[category][key] for key, value in zh[category].items() if value == label), label)
+            result.append((item[:2] if lang == "zh" else ("Intent " if category == "intents" else "Emotion ")) + words["transition"].format(label=label))
+    return result
+
+
 def build_facts(states: Mapping[str, Any], judgments: Mapping[str, Any], windows: Sequence[Mapping[str, Any]], events: Sequence[Mapping[str, Any]] = (), voice: Mapping[str, Any] | None = None, config: Mapping[str, Any] | None = None) -> dict[str, Any]:
     highlights = compute_highlights(judgments, windows, config)
     tr = load_translations("zh")

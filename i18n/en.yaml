@@ -74,3 +74,15 @@ facts:
     small: small
     medium: medium
     large: large
+
+narration:
+  delta_strong_up: rises markedly
+  delta_strong_down: falls markedly
+  delta_up: rises somewhat
+  delta_down: falls somewhat
+  highest: reaches the highest level
+  lowest: reaches the lowest level
+  rising: continues rising
+  falling: continues falling
+  transition: shifts to {label}
+  fallback: '{intent}, with a {emotion} tone'

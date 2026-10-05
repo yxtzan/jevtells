@@ -22,7 +22,7 @@ scene:
 
 narrate:
   model: google/gemini-3.1-flash-lite
-  max_tokens: 120
+  max_tokens: 1600
   validation_retries: 2
   facts:
     delta_threshold: 0.08

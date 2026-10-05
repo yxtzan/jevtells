@@ -16,11 +16,13 @@ def quote_tokens(text: str) -> list[str]:
     return re.findall(r"[a-zA-Z0-9]+(?:['’\-][a-zA-Z0-9]+)*|[\u3400-\u9fff]", text)
 
 
-def validation_errors(parsed: Mapping[str, Any], facts: Mapping[str, Any], previous: Sequence[str], speaker: str, lang: str) -> list[str]:
+def validation_errors(parsed: Mapping[str, Any], facts: Mapping[str, Any], previous: Sequence[str], speaker: str, lang: str, *, allow_repeated_opening: bool = False) -> list[str]:
     line, quote = str(parsed.get("line", "")).strip(), str(parsed.get("quote", "")).strip()
     errors: list[str] = []
     if not line or (len(line) > 32 if lang == "zh" else len(line.split()) > 16):
         errors.append(f"line exceeds its limit: {len(line)} characters / {len(line.split())} words. Chinese maximum is 32 TOTAL characters, including spaces, Latin letters and brackets; English maximum is 16 words. Use 20–28 Chinese characters, translate the phrase inside 「」 into short Chinese, keep quote in the original language")
+    if re.search(r"[0-9]", line):
+        errors.append("line must not contain Arabic digits")
     if line.endswith(("。", ".")) or "\n" in line:
         errors.append("one sentence without a final period is required")
     if RED_FLAGS.search(line):
@@ -83,9 +85,9 @@ def validation_errors(parsed: Mapping[str, Any], facts: Mapping[str, Any], previ
             required = "全场最高" if phrase == "highest" else "全场最低" if phrase == "lowest" else "回落" if phrase.endswith(" back") else "持续走低" if "fall" in phrase else "持续走高"
             if not any(required in item and (metric is None or metric in item) for item in highlights):
                 errors.append("English trend/extreme absent from facts.highlights")
-    if any(line[:4] == old[:4] for old in previous):
+    if not allow_repeated_opening and any(line[:4] == old[:4] for old in previous):
         errors.append(f"first four characters repeat an earlier line: {line[:4]!r}. Change the opening, still using only the given facts")
-    if lang == "zh":
+    if lang == "zh" and not allow_repeated_opening:
         if sum(old[:2] == line[:2] for old in previous) >= 2:
             errors.append("first two characters may appear at most twice across the video")
         before_quote = re.search(r"(.{2})「", line)
