@@ -52,7 +52,9 @@ def _arguments() -> argparse.Namespace:
     run_parser = subparsers.add_parser("run", help="run the JevTells data pipeline")
     run_parser.add_argument("input")
     run_parser.add_argument("-o", "--output")
-    run_parser.add_argument("--speaker", required=True)
+    run_parser.add_argument("--speaker")
+    run_parser.add_argument("--person", action="append", default=[], metavar="NAME=N@SECONDS")
+    run_parser.add_argument("--speaker-map", action="append", default=[], metavar="START-END=NAME")
     run_parser.add_argument("--scene", default=None)
     run_parser.add_argument("--lang", choices=("zh", "en"), default="zh")
     run_parser.add_argument("--srt")
@@ -71,7 +73,23 @@ def _arguments() -> argparse.Namespace:
     run_parser.add_argument("--title")
     run_parser.add_argument("--debug-layout", action="store_true", help="draw per-shot target bounds, forbidden zones and label positions")
     run_parser.add_argument("--reframe", choices=("auto","off"), default="auto", help="portrait full-height 4:3 crop (default: auto)")
-    return parser.parse_args()
+    arguments = parser.parse_args()
+    if arguments.command == "run":
+        try:
+            arguments.persons = _parse_persons(arguments.person)
+            if arguments.persons and (arguments.target or arguments.speaker or arguments.others_speaking):
+                raise ValueError("--person cannot be combined with --target/--speaker/--others-speaking; use --person NAME=N@SECONDS and --speaker-map START-END=NAME")
+            if not arguments.persons and not arguments.speaker:
+                raise ValueError("use --speaker NAME for single-person mode or --person NAME=N@SECONDS")
+            if arguments.speaker_map and len(arguments.persons) != 2:
+                raise ValueError("--speaker-map requires two registered --person names")
+            if len(arguments.persons) == 1:
+                name, anchors = next(iter(arguments.persons.items()))
+                arguments.speaker = name
+                arguments.target = [f"{n}@{t}" for n,t in anchors]
+        except ValueError as error:
+            parser.error(str(error))
+    return arguments
 
 
 def _parse_targets(values: list[str] | None) -> list[tuple[int, float]]:
@@ -93,6 +111,22 @@ def _parse_targets(values: list[str] | None) -> list[tuple[int, float]]:
             raise ValueError(f"--target requires N>=1 and seconds>=0, got {raw!r}")
         anchors.append((number, when))
     return anchors or [(1, 0.0)]
+
+
+def _parse_persons(values: list[str]) -> dict[str, list[tuple[int, float]]]:
+    import math
+    result: dict[str, list[tuple[int, float]]] = {}
+    for raw in values:
+        name, separator, anchor = raw.partition("=")
+        if not separator or not name.strip() or "@" not in anchor:
+            raise ValueError("--person requires NAME=N@SECONDS")
+        parsed = _parse_targets([anchor])[0]
+        if not math.isfinite(parsed[1]):
+            raise ValueError("--person seconds must be finite")
+        result.setdefault(name.strip(), []).append(parsed)
+    if len(result) > 2:
+        raise ValueError("--person supports at most two distinct people")
+    return result
 
 
 def _invoke(function: Any, *args: Any, **kwargs: Any) -> Any:
