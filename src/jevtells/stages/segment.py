@@ -74,7 +74,7 @@ def merge_short_windows(windows: list[dict[str, Any]], config: dict[str, Any], b
     minimum = float(config_value(config, 'windows.min_seconds', 2.0))
     maximum = float(config_value(config, 'windows.max_seconds', 5.0))
     def category(w):
-        return bool(w.get('speaker_other')), bool(w.get('target_offscreen'))
+        return bool(w.get('speaker_other')), bool(w.get('target_offscreen')), w.get('speaker') if w.get('two_person') else None
     groups: list[list[dict[str, Any]]] = []
     for window in windows:
         blocked = bool(groups and any(float(groups[-1][-1]['t1']) <= edge <= float(window['t0']) for edge in (boundaries or [])))

@@ -128,7 +128,10 @@ def run(
     states: dict[str, Any] = {}
     measured_points = points or {"t": [], "pose": np.empty((0, 33, 4))}
     for window in windows:
-        state = State(scene=scene, speaker=speaker, subtitle={"current": window["subtitle"], "previous": window.get("prev_subtitle", "")}, voice=_voice_text(voice, window, transcript, config), measured_actions=_actions(measured_points, window, actions, config))
+        name = window.get("speaker", speaker) if window.get("two_person") else speaker
+        selected_points = measured_points.get(name, {"t": [], "pose": np.empty((0,33,4))}) if window.get("two_person") else measured_points
+        selected_actions = {**actions, "events": [e for e in actions.get("events", []) if e.get("person") == name]} if window.get("two_person") and isinstance(actions, dict) else actions
+        state = State(scene=scene, speaker=name or "unknown", subtitle={"current": window["subtitle"], "previous": window.get("prev_subtitle", "")}, voice=_voice_text(voice, window, transcript, config), measured_actions=_actions(selected_points, window, selected_actions, config))
         states[window["id"]] = state.model_dump()
     destination.write_text(json.dumps(states, ensure_ascii=False, indent=2), encoding="utf-8")
     return states

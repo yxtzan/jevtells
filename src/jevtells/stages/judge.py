@@ -155,7 +155,7 @@ def _action_ids(state: Mapping[str, Any], window_id: str, out: Path) -> dict[str
         return {}
     payload = json.loads(path.read_text(encoding="utf-8"))
     events = payload.get("events", []) if isinstance(payload, Mapping) else payload
-    available = [(str(event["id"]), action_text(event)) for event in events if event.get("window") == window_id and event.get("id")]
+    available = [(str(event["id"]), action_text(event)) for event in events if event.get("window") == window_id and event.get("id") and ("person" not in event or event["person"] == state.get("speaker"))]
     result: dict[str, str] = {}
     for index, description in enumerate(state.get("measured_actions", [])):
         for candidate, (identifier, text) in enumerate(available):

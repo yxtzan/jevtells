@@ -35,6 +35,15 @@ def _targets_changed(output: Path, anchors: list[tuple[int, float]]) -> bool:
         return True
 
 
+def _parse_start(value):
+    import math
+    if value == "auto": return value
+    try: seconds=float(value)
+    except ValueError as error: raise argparse.ArgumentTypeError("--start requires auto or seconds") from error
+    if not math.isfinite(seconds) or seconds<0: raise argparse.ArgumentTypeError("--start requires finite nonnegative seconds")
+    return seconds
+
+
 def _arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="jevtells")
     subparsers = parser.add_subparsers(dest="command")
@@ -59,7 +68,7 @@ def _arguments() -> argparse.Namespace:
     run_parser.add_argument("--lang", choices=("zh", "en"), default="zh")
     run_parser.add_argument("--srt")
     run_parser.add_argument("--subtitle-source", choices=("auto", "ocr", "asr", "srt"), default="auto")
-    run_parser.add_argument("--start", type=float, default=0.0)
+    run_parser.add_argument("--start", type=_parse_start, default=0.0)
     run_parser.add_argument("--duration", type=float)
     run_parser.add_argument("--force", action="store_true")
     run_parser.add_argument("--until", default="render", choices=_STAGE_ORDER, help="last stage to run (default: render); state also writes debug.mp4")
@@ -320,6 +329,13 @@ def main() -> None:
     if not input_path.exists():
         raise FileNotFoundError(input_path)
     config = load_config(arguments.config)
+    if arguments.start == "auto":
+        from .stages.auto_start import resolve
+        resolve(arguments, config)
+    if len(getattr(arguments, "persons", {})) == 2:
+        from .stages.interview import run as interview_run
+        interview_run(arguments, config)
+        return
     anchors = _parse_targets(arguments.target)
     clip_id = _clip_id(input_path, arguments.start, arguments.duration)
     output = Path(arguments.output).parent if arguments.output else Path("work") / clip_id

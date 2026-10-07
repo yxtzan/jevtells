@@ -64,4 +64,4 @@ def split_presence_changes(windows: Sequence[Mapping[str, Any]], shots: Sequence
 
 
 def skip_reasons(windows: Sequence[Mapping[str, Any]]) -> dict[str, str]:
-    return {str(window['id']): 'speaker_other' if window.get('speaker_other') else 'target_offscreen' for window in windows if window.get('speaker_other') or window.get('target_offscreen')}
+    return {str(window['id']): 'speaker_unknown' if window.get('speaker_unknown') else 'speaker_other' if window.get('speaker_other') else 'target_offscreen' for window in windows if window.get('speaker_unknown') or window.get('speaker_other') or window.get('target_offscreen')}

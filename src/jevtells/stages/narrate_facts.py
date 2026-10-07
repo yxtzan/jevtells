@@ -177,6 +177,10 @@ def verbal_highlights(highlights: Sequence[str], lang: str = "zh") -> list[str]:
 
 def build_facts(states: Mapping[str, Any], judgments: Mapping[str, Any], windows: Sequence[Mapping[str, Any]], events: Sequence[Mapping[str, Any]] = (), voice: Mapping[str, Any] | None = None, config: Mapping[str, Any] | None = None) -> dict[str, Any]:
     highlights = compute_highlights(judgments, windows, config)
+    if any(w.get("two_person") for w in windows):
+        highlights = {}
+        for person in {w.get("speaker") for w in windows}:
+            highlights.update(compute_highlights(judgments, [w for w in windows if w.get("speaker") == person], config))
     tr = load_translations("zh")
     result: dict[str, Any] = {}
     opening_index = 0
@@ -195,18 +199,19 @@ def build_facts(states: Mapping[str, Any], judgments: Mapping[str, Any], windows
             "index": index, "total": len(windows),
             "subtitle": state.get("subtitle", {}).get("current", ""),
             "previous_subtitle": state.get("subtitle", {}).get("previous", ""),
-            "first_judged": opening_index == 0 and not window.get("speaker_other") and not window.get("target_offscreen"),
-            "measured_events": [{k:e.get(k) for k in ("limb","type","magnitude")} for e in events_for_state(state, events, identifier)],
+            "first_judged": opening_index == 0 and not window.get("speaker_other") and not window.get("target_offscreen") and not window.get("speaker_unknown"),
+            "measured_events": [{k:e.get(k) for k in ("limb","type","magnitude")} for e in events_for_state(state, [e for e in events if not window.get("two_person") or e.get("person")==state["speaker"]], identifier)],
             "hands_mostly_not_visible": "hands mostly not visible" in state.get("measured_actions", []),
-            "gestures": gesture_facts(state, events, identifier, judgment),
+            "gestures": gesture_facts(state, [e for e in events if not window.get("two_person") or e.get("person")==state["speaker"]], identifier, judgment),
             "voice": {"description": re.sub(r'speech rate[^;]*', 'speech rate ' + voice_metrics.get('speech_rate_band','适中'), state.get('voice','')), **{k:v for k,v in voice_metrics.items() if k not in {'speech_rate','speech_rate_wps','word_count','speech_rate_unit'}}, "speech_rate":voice_metrics.get('speech_rate_band','适中')},
             "judgments": {"scores": {tr["facts"]["scores"][key]: score_value(judgment, key) for key in SCORE_IDS}, **choices},
             "highlights": highlights[identifier],
             "speaker_other": bool(window.get("speaker_other")),
+            **({"speaker": state["speaker"], "speaker_unknown": bool(window.get("speaker_unknown"))} if window.get("two_person") else {}),
             "target_offscreen": bool(window.get("target_offscreen")),
             "opening_style": ("动作开头 / movement", "引语开头 / quotation", "数据变化开头 / measured change", "声音开头 / voice")[opening_index % 4],
         }
-        if not window.get("speaker_other") and not window.get("target_offscreen"):
+        if not window.get("speaker_other") and not window.get("target_offscreen") and not window.get("speaker_unknown"):
             opening_index += 1
     return result
 

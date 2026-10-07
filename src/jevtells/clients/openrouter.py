@@ -148,10 +148,14 @@ def _request_json(
             # No request headers or request body are retained.
             path = audit_dir / f"openrouter_error_{time.time_ns()}.json"
             path.write_text(json.dumps(event, ensure_ascii=False, indent=2), encoding="utf-8")
+        from . import budget
+        budget.record(event)
         if on_response is not None:
             on_response(event)
 
     for attempt in range(max(1, int(attempts))):
+        from . import budget
+        budget.before_request()
         if before_request is not None:
             before_request()
         try:
