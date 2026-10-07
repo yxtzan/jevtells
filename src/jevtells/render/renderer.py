@@ -219,7 +219,7 @@ class Composer:
         shot = next((s for s in self.shots if float(s["t0"]) <= seconds < float(s["t1"])), self.shots[-1])
         wi, gap = panel_window_at(self.windows, seconds)
         window = self.windows[wi] if wi is not None else {}
-        mode = "collapsed" if wi is None or gap or window.get("speaker_other") or window.get("target_offscreen") else self.card_modes.get(int(shot["index"]), "full")
+        mode = "collapsed" if wi is None or gap or window.get("speaker_other") or window.get("target_offscreen") or window.get("speaker_unknown") else self.card_modes.get(int(shot["index"]), "full")
         x, y, width, height = self.p["card"]
         x = self.card_x(seconds)
         if mode != "full":
@@ -240,7 +240,7 @@ class Composer:
             text = numbers + " · " + (self.tr["ui"]["unclear"] if uncertain(intent,self.settings.get("min_judgment_confidence",.4)) else self.tr["intents"].get(intent.get("label"),self.tr["ui"]["missing"]))
         else:
             reason = "other_legend" if window.get("speaker_other") else "offscreen_short" if window.get("target_offscreen") else "unjudged"
-            text = "JEV · " + self.tr["ui"][reason]
+            text = "JEV · " + ("无法确定说话人" if window.get("speaker_unknown") else str(window.get("speaker")) + "在画外" if window.get("two_person") and window.get("target_offscreen") else self.tr["ui"][reason])
         self.panels.text(image,text,x+8,y+5,w-16,self.settings["layout"].get("compact_card_size",14),color=self.c["muted"] if mode=="collapsed" else self.c["fg"])
         return image
 
@@ -280,7 +280,7 @@ class Composer:
         judgment = self.judgments.get(str(event.get("window"))) or {}
         probability = judgment.get("actions", {}).get(str(event["id"]))
         details.append(self.tr["ui"]["expressive"].format(value=f"{probability:.2f}" if isinstance(probability, (int, float)) else self.tr["ui"]["missing"]))
-        badge_text = " · ".join(details)
+        badge_text = " · ".join(([str(event["person"])] if event.get("person") else []) + details)
         badge_fit = self.fonts.fit(badge_text, "sans", self.p["badge_size"], available - 2 * label["badge_padding"][0] - label["badge_indent"], 1)
         bx, by = (self.layout.px(v) for v in label["badge_padding"])
         badge_width = round(badge_fit.font.getlength(badge_text)) + 2 * bx
@@ -476,7 +476,7 @@ class Composer:
                 compact = self.compact_card(index,mode,rect) if mode != "full" else None
                 duration = float(self.settings["animation"].get("card_collapse_seconds", .3))
                 before = self.windows[panel_index(self.windows,index-1)] if index else self.windows[index]
-                was_collapsed = bool(before.get("speaker_other") or before.get("target_offscreen"))
+                was_collapsed = bool(before.get("speaker_other") or before.get("target_offscreen") or before.get("speaker_unknown"))
                 changed = (mode == "collapsed") != was_collapsed
                 if changed and elapsed < duration and self.card_modes.get(int(next(s for s in self.shots if s["t0"]<=seconds<s["t1"])["index"])) != "mini":
                     amount = ease_in_out_cubic(elapsed/duration)
@@ -628,7 +628,18 @@ def run(clip: Path, out: Path, windows: Sequence[Mapping[str, Any]], points: Map
                                 shot['transition']['height'] = previous['height']
             (out / f"reframe_{kind}.json").write_text(json.dumps(plan,indent=2))
             geometry = Layout.create(kind, effective, source_size or frame_size,crop_at(plan,0),strip_y=plan.get("strip_y") if plan.get("mode")=="strip" else None)
-            painter = Composer(effective, geometry, windows, points, events, judgments, narration, transcript, title=title, sources=_sources(out, settings, config, lang), lang=lang, blur=blur, subtitles=subtitles, config=config, shots=shot_list,reframe_plan=plan)
+            composer_type = Composer
+            composer_kwargs = {}
+            if any(w.get("two_person") for w in windows):
+                from .two_person import TwoPersonComposer
+                composer_type = TwoPersonComposer
+                saved = read("track_meta.json", {})["signature"]["persons"]
+                person_tracks = {}
+                for p, name in enumerate(saved):
+                    with np.load(out / f"person_{p}.npz", allow_pickle=False) as loaded:
+                        person_tracks[name] = {k:loaded[k] for k in loaded.files}
+                composer_kwargs["person_tracks"] = person_tracks
+            painter = composer_type(effective, geometry, windows, points, events, judgments, narration, transcript, title=title, sources=_sources(out, settings, config, lang), lang=lang, blur=blur, subtitles=subtitles, config=config, shots=shot_list,reframe_plan=plan,**composer_kwargs)
             (out / f"panel_spacing_{kind}.json").write_text(json.dumps({"geometry":{"picture":geometry.video,"strip":geometry.strip_video,"strip_y":geometry.strip_y},"spacing":getattr(painter.panels,"spacing",None),"positions":painter.panels.p},indent=2))
             (out / f"layout_{kind}.json").write_text(json.dumps(list(painter.placements.values()), ensure_ascii=False, indent=2))
             if debug_layout:

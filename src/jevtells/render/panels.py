@@ -97,13 +97,16 @@ class Panels:
     @lru_cache(maxsize=32)
     def commentary(self, index: int | None) -> tuple[Image.Image, tuple[int, int]]:
         x, y, width, height = self.p["commentary"]
-        layer = Image.new("RGBA", (self.s(width), self.s(height)))
+        layer = Image.new("RGBA", (self.s(width), self.s(height + (22 if index is not None and self.windows[index].get("two_person") and self.layout.kind == "v" else 0))))
         if index is None:
             self.text(layer, self.tr["ui"]["waiting"], 0, 0, width, self.p["commentary_size"], color=self.c["muted"])
             return layer, self.layout.point(x, y)
         window = self.windows[index]
         value = self.narration.get(str(window["id"])) or {}
         line = self.tr["ui"]["other_speaker"] if window.get("speaker_other") else self.tr["ui"]["target_offscreen"] if window.get("target_offscreen") else value.get("line", self.tr["ui"]["missing"])
+        if window.get("two_person"):
+            if window.get("speaker_unknown"): line = "（无法确定说话人）"
+            elif window.get("target_offscreen"): line = f"（{window['speaker']}在画外，本句不做判定）"
         number = f"W{index + 1:02d}"
         tag_font = self.fonts.font("mono", self.p["index_size"])
         pad_x, pad_y = self.g["tag_padding"]
@@ -113,15 +116,25 @@ class Panels:
         else:
             px, py = 0, 0
         offset = px + tag_w + self.p["commentary_gap"]
+        speaker_tag = str(window.get("speaker") or "unknown") if window.get("two_person") else ""
+        if speaker_tag and self.layout.kind == "h":
+            offset += self.fonts.font("sans", self.p["index_size"]+2).getlength(speaker_tag)/self.layout.scale + 2*pad_x + self.p["commentary_gap"]
         fitted = self.fonts.fit(str(line), "serif_black" if self.layout.kind == "v" else "sans_black", self.p["commentary_size"], width - offset - px, 2 if self.layout.kind == "v" else 1, self.g["highlight_padding"])
         draw = ImageDraw.Draw(layer)
         if self.layout.kind == "h":
             content_width = min(width, offset + max(fitted.font.getlength(row) / self.layout.scale for row in fitted.lines) + px + 2 * self.g["highlight_padding"])
             draw.rectangle(self.layout.rect((0, 0, content_width, height)), fill=self.c["ink"])
-        tag_y = py + self.p["index_top"]
+        tag_y = py + self.p["index_top"] + (22 if window.get("two_person") and self.layout.kind == "v" else 0)
         draw.rectangle(self.layout.rect((px, tag_y, tag_w, self.p["index_size"] * self.g["line_height"] + 2 * pad_y)), fill=self.c["lime"])
         draw.text(self.layout.point(px + pad_x, tag_y + pad_y), number, font=tag_font, fill=self.c["ink"], anchor="lt")
-        draw_fitted(layer, self.layout.point(offset, py), fitted, self.c, line_height=self.g["line_height"], highlight_padding=self.s(self.g["highlight_padding"]), fill=self.c["muted"] if window.get("speaker_other") or window.get("target_offscreen") else self.c["fg"])
+        if speaker_tag:
+            if self.layout.kind == "h":
+                sx = px + tag_w + self.p["commentary_gap"]
+                self.text(layer,speaker_tag,sx,tag_y,width-sx,self.p["index_size"]+2,color=window.get("speaker_color",self.c["lime"]))
+            else:
+                self.text(layer,"正在说话 · "+speaker_tag,0,0,width,14,color=window.get("speaker_color",self.c["lime"]))
+                py += 22
+        draw_fitted(layer, self.layout.point(offset, py), fitted, self.c, line_height=self.g["line_height"], highlight_padding=self.s(self.g["highlight_padding"]), fill=self.c["muted"] if window.get("speaker_other") or window.get("target_offscreen") or window.get("speaker_unknown") else self.c["fg"])
         return layer, self.layout.point(x, y)
 
     @lru_cache(maxsize=32)
@@ -129,7 +142,7 @@ class Panels:
         image = self.canvas()
         window = self.windows[index]
         value = self.narration.get(str(window["id"])) or {}
-        if window.get("speaker_other") or window.get("target_offscreen") or not value.get("quote"):
+        if window.get("speaker_other") or window.get("target_offscreen") or window.get("speaker_unknown") or not value.get("quote"):
             return image
         x, _y, width, _height = self.p["commentary"]
         y, size = self.p["quote_y"], self.p["quote_size"]
@@ -169,8 +182,9 @@ class Panels:
             draw.rectangle(self.layout.rect((x, y, width, height)), fill=(*ImageColor.getrgb(self.c["ink"]), round(255 * self.settings["panel_opacity"])))
             draw.rectangle(self.layout.rect((x, y, width, self.p["card_border"])), fill=self.c["lime"])
             pad = self.p["card_padding"]
-            self.text(image, self.tr["ui"]["card_title"], x + pad, y + pad, width - 2 * pad, self.p["card_title_size"], color=self.c["lime"])
-            source = self.tr["ui"]["card_source"]
+            card_title = self.tr["ui"]["card_title"] + (" · " + str(self.windows[index].get("speaker") or "unknown") if self.windows[index].get("two_person") else "")
+            self.text(image, card_title, x + pad, y + pad, width - 2 * pad, self.p["card_title_size"], color=self.c["lime"])
+            source = "" if self.windows[index].get("two_person") else self.tr["ui"]["card_source"]
             font = self.fonts.font("sans", self.p["card_source_size"])
             self.text(image, source, x + width - pad - font.getlength(source) / self.layout.scale, y + pad, width - 2 * pad, self.p["card_source_size"])
         for key, (x, y, width) in zip(SCORE_IDS, self.metric_boxes()):
@@ -250,7 +264,7 @@ class Panels:
             judgment = self.judgments.get(str(window["id"])) or {}
             emotion = (judgment.get("emotion") or {}).get("label")
             color = self.c["emotions"].get(emotion)
-            if color and not (window.get("speaker_other") or window.get("target_offscreen")):
+            if color and not (window.get("speaker_other") or window.get("target_offscreen") or window.get("speaker_unknown")):
                 choice = judgment.get('emotion')
                 fill = (*ImageColor.getrgb(color),round(255*float(self.settings.get('uncertain_arc_alpha',.4)))) if uncertain(choice,float(self.settings.get('min_judgment_confidence',.4))) else color
                 draw.rectangle(rect, fill=fill)
@@ -265,6 +279,8 @@ class Panels:
                 image.alpha_composite(stripe, (rect[0], rect[1]))
                 if "other" not in seen:
                     seen.append("other")
+            if window.get("two_person"):
+                draw.rectangle((rect[0],rect[1],rect[2],rect[1]+self.s(3)),fill=window.get("speaker_color",self.c["muted"]))
             if i == index:
                 offset = self.s(self.g["arc_outline_offset"])
                 draw.rectangle((rect[0] - offset, rect[1] - offset, rect[2] + offset, rect[3] + offset), outline=self.c["fg"], width=max(1, self.s(self.g["arc_outline"])))
@@ -288,6 +304,9 @@ class Panels:
         identifier = str(window["id"])
         judgment = self.judgments.get(identifier)
         previous = self.judgments.get(str(self.windows[panel_index(self.windows,index - 1)]["id"])) if index else None
+        if window.get("two_person"):
+            prior = next((w for w in reversed(self.windows[:index]) if w.get("speaker") == window.get("speaker") and self.judgments.get(str(w["id"]))), None)
+            previous = self.judgments.get(str(prior["id"])) if prior else None
         amount = progress(elapsed, self.settings["animation"]["number_seconds"])
         for key, (x, y, width) in zip(SCORE_IDS, self.metric_boxes()):
             new, old = score_value(judgment, key), score_value(previous, key)
@@ -319,7 +338,7 @@ class Panels:
     def _spark(self, image: Image.Image, key: str, index: int, elapsed: float, x: float, y: float, width: float, height: float) -> None:
         draw = ImageDraw.Draw(image)
         pad = self.g["spark_padding"]
-        values = [score_value(self.judgments.get(str(window["id"])), key) for window in self.windows]
+        values = [score_value(self.judgments.get(str(window["id"])), key) if not self.windows[index].get("two_person") or window.get("speaker")==self.windows[index].get("speaker") else None for window in self.windows]
         known = [value for value in values if value is not None]
         # A fixed per-video domain keeps small changes visible without
         # changing the axis at every window. Future points remain absent.

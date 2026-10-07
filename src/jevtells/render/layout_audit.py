@@ -13,6 +13,8 @@ def frame_violations(frame: Mapping[str, Any]) -> list[dict[str, Any]]:
     labels = frame.get("labels", [])
     for index, label in enumerate(labels):
         collisions = [zone["name"] for zone in frame.get("forbidden", []) if intersects(label["rect"], zone["rect"])]
+        core = frame.get("person_forbidden", {}).get(label.get("person"))
+        if core and intersects(label["rect"], core): collisions.append("other_core")
         for other in labels[:index]:
             if intersects(label["rect"], other["rect"]):
                 collisions.append("label:" + other["slot"])
@@ -78,7 +80,7 @@ def leader_violations(frame: Mapping[str, Any]) -> list[dict[str, Any]]:
     faces = [z['rect'] for z in frame.get('leader_zones', []) if z['name'].startswith('face')]
     for label in frame.get('labels', []):
         path = label.get('actual_hand_leader', label.get('leader', []))
-        flags = [line_flags(path, face, frame.get('midline'), frame.get('endpoint_exemption',0)) for face in faces or [None]]
+        flags = [line_flags(path, face, label.get('midline',frame.get('midline')), frame.get('endpoint_exemption',0)) for face in faces or [None]]
         face_hit, mid_hit = any(f[0] for f in flags), any(f[1] for f in flags)
         if face_hit:
             failures.append({'slot':label['slot'],'event':label['event'],'zone':'face'})
