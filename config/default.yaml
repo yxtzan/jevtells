@@ -12,6 +12,9 @@ models:
   whisper: small
   pose: pose_landmarker_full.task
   hands: hand_landmarker.task
+  face_detector: face_detection_yunet_2023mar.onnx
+  face_recognizer: face_recognition_sface_2021dec.onnx
+  face_landmarker: face_landmarker.task
 
 jev:
   model: typesafe/jev-1.13
@@ -440,3 +443,21 @@ ocr:
   word_colour_ratio: 0.30
   word_text_value: 100
   word_text_saturation: 50
+
+# Shared two-person identity, audiovisual speech and rendering thresholds.
+two_person:
+  colors: ['#C8FF2E', '#4FD8FF']
+  face_score: 0.8
+  face_cosine: 0.363
+  face_margin: 0.10
+  face_min_pixels: 48
+  face_pose_distance: 1.5
+  mouth_min_pixels: 64
+  mouth_min_observed_ratio: 0.50
+  mouth_motion: 0.008
+  correlation: 0.25
+  correlation_margin: 0.10
+  audio_min_rms: 0.005
+  min_samples: 12
+  audio_smooth_seconds: 0.10
+  auto_start_seconds: 2.0
