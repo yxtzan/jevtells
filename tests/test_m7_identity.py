@@ -17,3 +17,11 @@ def test_cosine_unobservable_is_rejected_and_models_registered():
     config=load_config()
     for name in ('face_detector','face_recognizer'):
         assert 'models/'+config['models'][name] in ASSETS
+
+
+def test_hungarian_keeps_exclusive_assignments_and_rejects_ambiguity():
+    from jevtells.stages.two_person_track import exclusive_assignment
+    scores=np.array([[.9,.8],[.85,.1]])
+    assert exclusive_assignment(scores,np.ones_like(scores,bool)).tolist()==[1,0]
+    assert exclusive_assignment(scores,np.zeros_like(scores,bool)).tolist()==[-1,-1]
+    assert exclusive_assignment(scores,np.array([[True,False],[True,False]])).tolist()==[0,-1]
