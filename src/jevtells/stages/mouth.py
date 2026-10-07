@@ -7,7 +7,7 @@ from ..resources import asset_path
 
 
 def read_mouths(clip, poses, out, config, force=False):
-    destination=Path(out)/'mouth_features.npz';settings=config['two_person'];signature=str(sorted(settings.items()))
+    destination=Path(out)/'mouth_features.npz';settings=config['two_person'];signature=str(sorted((k,v) for k,v in settings.items() if k.startswith('face_') or k=='mouth_min_pixels'))
     if destination.exists() and not force:
         with np.load(destination,allow_pickle=False) as z:
             if str(z['signature'])==signature and len(z['opening'])==len(poses): return z['opening']

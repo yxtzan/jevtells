@@ -454,7 +454,8 @@ two_person:
   face_pose_distance: 1.5
   mouth_min_pixels: 64
   mouth_min_observed_ratio: 0.50
-  mouth_motion: 0.008
+  mouth_motion: 0.002
+  mouth_still_motion: 0.001
   correlation: 0.25
   correlation_margin: 0.10
   audio_min_rms: 0.005

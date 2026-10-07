@@ -45,8 +45,8 @@ def classify(window, tracks, opening, audio_t, envelope, fps, settings, has_voic
             speaker=name;confidence=max(0.,min(1.,best));reason='correlation'
     if voiced and speaker is None and len(observable)==1 and len(tracks)==2:
         name=observable[0]
-        if evidence[name]['mouth_motion'] is not None and evidence[name]['mouth_motion']<settings['mouth_motion']:
-            speaker=next(n for n in tracks if n!=name);reason='offscreen';confidence=1-min(1.,evidence[name]['mouth_motion']/settings['mouth_motion'])
+        if evidence[name]['mouth_motion'] is not None and evidence[name]['mouth_motion']<settings.get('mouth_still_motion',settings['mouth_motion']):
+            speaker=next(n for n in tracks if n!=name);reason='offscreen';confidence=1-min(1.,evidence[name]['mouth_motion']/settings.get('mouth_still_motion',settings['mouth_motion']))
     return dict(speaker=speaker,confidence=confidence,evidence=evidence,reason=reason)
 
 

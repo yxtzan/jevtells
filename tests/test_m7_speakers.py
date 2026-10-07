@@ -30,3 +30,12 @@ def test_silence_never_selects_a_speaker_and_maps_validate():
     assert parse_maps(['0-4=A','10.3-15.7=B'],['A','B'])==[(0.,4.,'A'),(10.3,15.7,'B')]
     for values in (['0-4=C'],['0-4=A','3-5=B']):
         with pytest.raises(ValueError): parse_maps(values,['A','B'])
+
+
+def test_manual_override_only_applies_to_its_interval_and_records_evidence(tmp_path):
+    from jevtells.stages.active_speaker import run
+    n=120;t=np.arange(n)/30;opening=np.full((n,2),np.nan)
+    windows=[{'id':'W00','t0':0.,'t1':2.,'kind':'speech'},{'id':'W01','t0':2.,'t1':4.,'kind':'speech'}]
+    marked=run(windows,tracks(n),opening,{'t':t.tolist(),'rms_db':[-20]*n},load_config(),tmp_path,[(0.,2.,'B')])
+    assert marked[0]['speaker']=='B' and marked[0]['speaker_reason']=='manual'
+    assert marked[1]['speaker_unknown'] and marked[1]['speaker'] is None

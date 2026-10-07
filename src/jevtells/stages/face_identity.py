@@ -25,7 +25,7 @@ def associate_faces(poses, faces, width, height, settings):
 def read_features(clip, poses, out, config, force=False):
     path=Path(out)/'face_features.npz'
     settings=config['two_person']
-    signature=str(sorted(settings.items()))
+    signature=str(sorted((k,v) for k,v in settings.items() if k.startswith('face_') or k=='mouth_min_pixels'))
     if path.exists() and not force:
         with np.load(path,allow_pickle=False) as z:
             if str(z['signature'])==signature and len(z['embeddings'])==len(poses):
