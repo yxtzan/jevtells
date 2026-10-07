@@ -70,7 +70,7 @@ def main() -> None:
     results = [check(args.clip_dir, kind) for kind in (("h", "v") if args.layout == "both" else (args.layout,))]
     (args.clip_dir / "layout_check.json").write_text(json.dumps(results, ensure_ascii=False, indent=2))
     print(json.dumps(results, ensure_ascii=False, indent=2))
-    if any(result["violation_frames"] or result["hidden_label_frames"] or result["hidden_leader_frames"] or result["face_crossing_ratio"] > .02 for result in results):
+    if any(result["violation_frames"] or result["hidden_label_frames"] or result["hidden_leader_frames"] or result["leader_face_frames"] for result in results):
         raise SystemExit(1)
 
 

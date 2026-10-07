@@ -39,3 +39,26 @@ def mark_windows(windows: Sequence[dict[str, Any]], intervals: Sequence[tuple[fl
 
 def other_ids(windows: Sequence[dict[str, Any]]) -> set[str]:
     return {str(window["id"]) for window in windows if window.get("speaker_other")}
+
+
+def split_speaker_changes(windows, intervals, transcript, config):
+    """Preserve exact supplied speaker boundaries before minimum-duration merging."""
+    edges = sorted({t for interval in intervals for t in interval})
+    words = [word for segment in transcript.get('segments',[]) for word in segment.get('words',[])]
+    tolerance = float(config.get('windows',{}).get('split_boundary_tolerance_frames',.5))/float(config.get('max_fps',30))
+    result = []
+    for window in windows:
+        start,end = float(window['t0']),float(window['t1'])
+        cuts = [start,*[t for t in edges if start+tolerance < t < end-tolerance],end]
+        for a,b in zip(cuts,cuts[1:]):
+            row = {**window,'t0':a,'t1':b}
+            if len(cuts)>2:
+                if words:
+                    row['subtitle'] = ' '.join(str(word['w']) for word in words if a <= (float(word['t0'])+float(word['t1']))/2 < b)
+                elif not a <= (start+end)/2 < b:
+                    # A burned cue has no word timings: keep its literal text
+                    # once in the piece containing its midpoint.
+                    row['subtitle'] = ''
+                    row['subtitle_translation'] = ''
+            result.append(row)
+    return result

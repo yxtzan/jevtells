@@ -58,6 +58,23 @@ def validation_errors(parsed: Mapping[str, Any], facts: Mapping[str, Any], previ
         errors.append(f"line exceeds its limit: {len(line)} characters / {len(line.split())} words. Chinese maximum is 32 TOTAL characters, including spaces, Latin letters and brackets; English maximum is 16 words. Use 20–28 Chinese characters, translate the phrase inside 「」 into short Chinese, keep quote in the original language")
     if re.search(r"[0-9]", line):
         errors.append("line must not contain Arabic digits")
+    if facts.get('first_judged') and re.search(r'升|降|回落|走高|走低|转为|\b(ris(?:e|es|ing)|fall(?:s|ing)?|drops?|turns? to|shifts? to)\b', line, re.I):
+        errors.append('first judged window has no earlier comparison; omit directional terms')
+    if re.search(r'每秒|[零〇一二两三四五六七八九十百千万亿]+\s*(?:字|词|次|个|下|秒|成|倍)|\b(?:per second|[a-z]+ times)\b', line, re.I):
+        errors.append('no quantified rate or number plus measure word; use a relative speech-rate band')
+    if facts.get('hands_mostly_not_visible') and re.search(r'没有明显动作|无明显动作|no (?:notable|visible) gestures',line,re.I):
+        errors.append('hands are mostly unobserved; do not imply stillness')
+    if re.search(r'大幅|大动作|幅度大',line):
+        action_names = {'下压':'press_down','抬起':'raise','抬手':'raise','上抬':'raise','张开':'open_palm','展开':'spread','收拢':'gather','摆动':'beat','点头':'nod','摇头':'shake'}
+        limbs = {'左手':'left_hand','右手':'right_hand','双手':'both_hands'}
+        for clause in re.split(r'[，,；;]',line):
+            if not re.search(r'大幅|大动作|幅度大',clause):continue
+            actions = {code for text,code in action_names.items() if text in clause}
+            named = {code for text,code in limbs.items() if text in clause}
+            evidence = facts.get('measured_events', [])
+            for action in actions or {None}:
+                if not any(e.get('magnitude')=='large' and e.get('type')==action and (not named or e.get('limb') in named or ('both_hands' in named and all(any(o.get('type')==action and o.get('magnitude')=='large' and o.get('limb')==side for o in evidence) for side in ('left_hand','right_hand')))) for e in evidence):
+                    errors.append('large amplitude must match the same action and named hand')
     if line.endswith(("。", ".")) or "\n" in line:
         errors.append("one sentence without a final period is required")
     if RED_FLAGS.search(line):
@@ -74,10 +91,15 @@ def validation_errors(parsed: Mapping[str, Any], facts: Mapping[str, Any], previ
     if line.count("「") > 1 or line.count("」") > 1 or line.count("「") != line.count("」"):
         errors.append("line must contain at most one matched pair of 「」")
     names = display_names()
+    subtitle = str(facts.get("subtitle", ""))
+    chinese_subtitle = bool(re.search(r"[\u3400-\u9fff]",subtitle))
     for phrase in re.findall(r"「([^」]*)」", line):
         if phrase.strip().casefold() in names:
             errors.append("corner quote contains a display label or summary term; use a translated subtitle phrase")
-        if lang == "zh" and (not re.search(r"[\u3400-\u9fff]", phrase) or re.search(r"[A-Za-z]", phrase)):
+        if chinese_subtitle:
+            if phrase not in subtitle or re.search(r'(?<=[\u3400-\u9fff])\s+(?=[\u3400-\u9fff])',phrase):
+                errors.append('Chinese corner quote must be an unspaced exact subtitle substring')
+        elif lang == "zh" and (not re.search(r"[\u3400-\u9fff]", phrase) or re.search(r"[A-Za-z]", phrase)):
             errors.append("corner quote must be a Chinese translation of the current subtitle phrase")
     opening_names = {value.casefold() for language in ("zh", "en")
                      for tr in [load_translations(language)] for group in ("intents", "emotions")
@@ -159,6 +181,6 @@ def validation_errors(parsed: Mapping[str, Any], facts: Mapping[str, Any], previ
             if earlier and earlier[-1] and earlier[-1][1] == opening:
                 errors.append("two characters before 「 must differ in adjacent lines")
     subtitle = str(facts.get("subtitle", ""))
-    if not quote or quote not in subtitle or not 2 <= len(quote_tokens(quote)) <= 8:
+    if not (not quote and len(quote_tokens(subtitle)) < 2) and (not quote or quote not in subtitle or not 2 <= len(quote_tokens(quote)) <= 8):
         errors.append("quote must be an exact subtitle substring with 2–8 tokens")
     return errors

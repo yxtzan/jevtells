@@ -100,6 +100,9 @@ def plan_crops(width: int, height: int, shots: Sequence[Mapping[str, Any]], poin
     fps=float(points.get("fps",30));pose=np.asarray(points.get("pose",[]),dtype=float)
     timeline=[]
     for shot in shots:
+        if shot.get("multi_person"):
+            timeline.append({"index":shot["index"],"t0":shot["t0"],"t1":shot["t1"],"left":0.,"width":width,"height":height,"pans":[],"multi_person":True})
+            continue
         left=crop_left(width,height,shot.get("target_center_x"),subtitles,float(settings.get("max_offset",.08)))
         pans=[];pending=None;current=left
         start,end=round(float(shot["t0"])*fps),min(len(pose),round(float(shot["t1"])*fps))
@@ -123,6 +126,12 @@ def plan_crops(width: int, height: int, shots: Sequence[Mapping[str, Any]], poin
             else:
                 pending=None
         timeline.append({"index":shot["index"],"t0":shot["t0"],"t1":shot["t1"],"left":left,"width":height*4/3,"height":height,"pans":pans})
+    for previous, current in zip(timeline, timeline[1:]):
+        source_shot = next(s for s in shots if s['index'] == current['index'])
+        if not source_shot.get('cut_at_start') and bool(previous.get('multi_person')) != bool(current.get('multi_person')):
+            origin = crop_at({'enabled':True,'shots':[previous]},current['t0'])
+            current['transition'] = {'t0':current['t0'], 'seconds':float(settings.get('zoom_seconds',.6)),
+                                     'left':origin[0], 'width':origin[2], 'height':origin[3]}
     return {"enabled":True,"shots":timeline,"subtitle_bounds":subtitles,"subtitle_oversized":bool(subtitles is not None and subtitles[1]-subtitles[0]>height*4/3)}
 
 
@@ -135,4 +144,11 @@ def crop_at(plan: Mapping[str, Any], seconds: float) -> tuple[float,float,float,
         if seconds>=pan["t0"]:
             amount=ease_in_out_cubic((seconds-pan["t0"])/(pan["t1"]-pan["t0"]))
             left=pan["from"]+(pan["to"]-pan["from"])*amount
-    return left,0,float(shot["width"]),float(shot["height"])
+    width, height = float(shot['width']), float(shot['height'])
+    transition = shot.get('transition')
+    if transition:
+        amount = ease_in_out_cubic((seconds-transition['t0'])/transition['seconds'])
+        left = transition['left']+(left-transition['left'])*amount
+        width = transition['width']+(width-transition['width'])*amount
+        height = transition['height']+(height-transition['height'])*amount
+    return left,0,width,height

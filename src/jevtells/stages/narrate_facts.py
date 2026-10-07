@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from ..i18n import load_translations
 from .state import action_text
+from .certainty import uncertain
 
 
 SCORE_IDS = ("confidence", "focus", "tension")
@@ -90,7 +92,7 @@ def compute_highlights(judgments: Mapping[str, Any], windows: Sequence[Mapping[s
     extrema: dict[str, tuple[float, float] | None] = {}
     means: dict[str, float] = {}
     for key in SCORE_IDS:
-        values = [score_value(judgments.get(str(w["id"])), key) for w in windows if not w.get("speaker_other")]
+        values = [score_value(judgments.get(str(w["id"])), key) for w in windows if not w.get("speaker_other") and not w.get("target_offscreen")]
         values = [value for value in values if value is not None]
         extrema[key] = (min(values), max(values)) if len(values) >= min_extrema_windows else None
         means[key] = sum(values) / len(values) if values else 0.0
@@ -100,7 +102,7 @@ def compute_highlights(judgments: Mapping[str, Any], windows: Sequence[Mapping[s
     for window in windows:
         identifier = str(window["id"])
         judgment = judgments.get(identifier)
-        if window.get("speaker_other") or not isinstance(judgment, Mapping):
+        if window.get("speaker_other") or window.get("target_offscreen") or not isinstance(judgment, Mapping):
             history.clear()
             previous = None
             continue
@@ -133,7 +135,7 @@ def compute_highlights(judgments: Mapping[str, Any], windows: Sequence[Mapping[s
             for field, category, label in (("intent", "intents", "意图"), ("emotion", "emotions", "情绪")):
                 old = (previous.get(field) or {}).get("label")
                 new = (judgment.get(field) or {}).get("label")
-                if old and new and old != new:
+                if old and new and old != new and not uncertain(previous.get(field), float((config or {}).get("judgment",{}).get("min_confidence",.4))) and not uncertain(judgment.get(field), float((config or {}).get("judgment",{}).get("min_confidence",.4))):
                     highlights.append(f"{label}由「{tr[category].get(old, old)}」转为「{tr[category].get(new, new)}」")
         previous = judgment
     for _distance, identifier, text in sorted(extreme_candidates, key=lambda item: -item[0])[:math.ceil(len(windows) / 3)]:
@@ -186,20 +188,25 @@ def build_facts(states: Mapping[str, Any], judgments: Mapping[str, Any], windows
         for field, category in (("intent", "intents"), ("emotion", "emotions")):
             choice = judgment.get(field) or {}
             label = choice.get("label")
-            choices[field] = {"label": tr[category].get(label, label), "confidence": choice.get("confidence")}
+            if not uncertain(choice, float((config or {}).get('judgment',{}).get('min_confidence',.4))):
+                choices[field] = {"label": tr[category].get(label, label), "confidence": choice.get("confidence")}
         voice_metrics = (voice or {}).get("metrics_by_window", {}).get(identifier, {})
         result[identifier] = {
             "index": index, "total": len(windows),
             "subtitle": state.get("subtitle", {}).get("current", ""),
             "previous_subtitle": state.get("subtitle", {}).get("previous", ""),
+            "first_judged": opening_index == 0 and not window.get("speaker_other") and not window.get("target_offscreen"),
+            "measured_events": [{k:e.get(k) for k in ("limb","type","magnitude")} for e in events_for_state(state, events, identifier)],
+            "hands_mostly_not_visible": "hands mostly not visible" in state.get("measured_actions", []),
             "gestures": gesture_facts(state, events, identifier, judgment),
-            "voice": {"description": state.get("voice", ""), **voice_metrics},
+            "voice": {"description": re.sub(r'speech rate[^;]*', 'speech rate ' + voice_metrics.get('speech_rate_band','适中'), state.get('voice','')), **{k:v for k,v in voice_metrics.items() if k not in {'speech_rate','speech_rate_wps','word_count','speech_rate_unit'}}, "speech_rate":voice_metrics.get('speech_rate_band','适中')},
             "judgments": {"scores": {tr["facts"]["scores"][key]: score_value(judgment, key) for key in SCORE_IDS}, **choices},
             "highlights": highlights[identifier],
             "speaker_other": bool(window.get("speaker_other")),
+            "target_offscreen": bool(window.get("target_offscreen")),
             "opening_style": ("动作开头 / movement", "引语开头 / quotation", "数据变化开头 / measured change", "声音开头 / voice")[opening_index % 4],
         }
-        if not window.get("speaker_other"):
+        if not window.get("speaker_other") and not window.get("target_offscreen"):
             opening_index += 1
     return result
 

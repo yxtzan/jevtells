@@ -36,3 +36,24 @@ def commentary_at(index: int, elapsed: float, animation: Mapping[str, Any]) -> t
         return index - 1, max(0.0, 1 - elapsed / out), 0.0
     amount = progress(elapsed - out, float(animation["commentary_in_seconds"]))
     return index, amount, float(animation["commentary_offset"]) * (1 - amount)
+
+
+def panel_index(windows: Sequence[Mapping[str, Any]], index: int | None) -> int | None:
+    while index is not None and index > 0 and windows[index].get('hold_previous_panel'):
+        index -= 1
+    return index
+
+
+def panel_window_at(windows: Sequence[Mapping[str, Any]], seconds: float) -> tuple[int | None, bool]:
+    index,gap = window_at(windows,seconds)
+    return panel_index(windows,index),gap
+
+
+def commentary_layers(windows: Sequence[Mapping[str, Any]], index: int, elapsed: float, animation: Mapping[str, Any]) -> list[tuple[int, float, float]]:
+    """After a held interjection, crossfade from the last visible sentence."""
+    if index and windows[index-1].get('hold_previous_panel'):
+        amount = progress(elapsed, float(animation['commentary_in_seconds']))
+        return [(panel_index(windows,index-1),1-amount,0.),
+                (index,amount,float(animation['commentary_offset'])*(1-amount))]
+    sentence,amount,offset = commentary_at(index,elapsed,animation)
+    return [(panel_index(windows,sentence),amount,offset)]

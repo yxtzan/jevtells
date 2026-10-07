@@ -35,6 +35,9 @@ scores:
   focus: 专注
   tension: 紧张
 ui:
+  unclear: 不明显
+  unjudged: 未判定
+  offscreen_short: 主角不在画面
   disclaimer: 未经人工校准 · 仅供演示
   source: 来源：JevTells + OpenRouter
   unknown: 未知
@@ -42,6 +45,7 @@ ui:
   brand: JevTells · 肢体潜台词
   title: AI 读{speaker}
   waiting: 等待第一句…
+  target_offscreen: （主角不在画面，本句不做判定）
   other_speaker: （他人发言，本句不做判定）
   other_legend: 他人发言
   locked: 目标已锁定

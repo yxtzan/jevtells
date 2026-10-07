@@ -45,8 +45,8 @@ def test_cut_clears_old_labels_and_card_moves_only_at_boundary():
     actions=[{"id":"old","t0":.1,"t1":.8,"type":"raise","limb":"right_hand","magnitude":"large","shot_index":1},{"id":"new","t0":1,"t1":2,"type":"raise","limb":"left_hand","magnitude":"large","shot_index":2}]
     painter=Composer(settings,Layout.create("h",settings,(1280,720)),[{"id":"W0","t0":0,"t1":3}],points,actions,{}, {},{},title="Title",sources="Source",lang="en",blur=[],subtitles=False,config=config,shots=shots)
     assert painter.card_x(.9)==968
-    assert painter.card_x(1)==968
-    assert painter.card_x(1.2)==pytest.approx(500)
+    assert painter.card_x(1)==32
+    assert painter.card_x(1.2)==32
     assert painter.card_x(1.4)==pytest.approx(32)
     assert painter.card_x(2.5)==32
     source=Image.new("RGB",(1280,720))

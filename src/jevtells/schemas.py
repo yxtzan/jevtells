@@ -13,10 +13,13 @@ class Window(BaseModel):
     t0: float
     t1: float
     subtitle: str
+    subtitle_translation: str = ""
     prev_subtitle: str = ""
     shot: str = "target"
     kind: str = "speech"
     speaker_other: bool = False
+    target_offscreen: bool = False
+    target_presence_ratio: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
 class State(BaseModel):
@@ -70,3 +73,30 @@ class SceneDescription(BaseModel):
     failed: int = Field(ge=0)
     source: str | None = None
     error: str | None = None
+
+
+class IdentityDecision(BaseModel):
+    frame: int
+    selected_index: int | None
+    person_number: int | None
+    similarity: float | None
+    second_similarity: float | None
+    result: str
+
+
+class IdentityShot(BaseModel):
+    t0: float
+    t1: float
+    cut_at_start: bool
+    decisions: list[IdentityDecision]
+    target_presence_ratio: float = Field(ge=0, le=1)
+
+
+class TrackMetadata(BaseModel):
+    anchors: list[tuple[int, float]]
+    lost_frames: int
+    identity_version: int
+    config: dict[str, Any]
+    references: list[dict[str, Any]] = Field(default_factory=list)
+    shots: list[IdentityShot] = Field(default_factory=list)
+    recoveries: list[IdentityDecision] = Field(default_factory=list)

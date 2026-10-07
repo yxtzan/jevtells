@@ -8,7 +8,8 @@ from typing import Any, Mapping, Sequence
 from PIL import Image, ImageColor, ImageDraw
 
 from ..stages.narrate_facts import SCORE_IDS, score_value
-from .animation import interpolate, progress
+from ..stages.certainty import uncertain
+from .animation import interpolate, progress, panel_index
 from .geometry import Layout
 from .text import Fonts, draw_fitted, spaced_text
 
@@ -102,7 +103,7 @@ class Panels:
             return layer, self.layout.point(x, y)
         window = self.windows[index]
         value = self.narration.get(str(window["id"])) or {}
-        line = self.tr["ui"]["other_speaker"] if window.get("speaker_other") else value.get("line", self.tr["ui"]["missing"])
+        line = self.tr["ui"]["other_speaker"] if window.get("speaker_other") else self.tr["ui"]["target_offscreen"] if window.get("target_offscreen") else value.get("line", self.tr["ui"]["missing"])
         number = f"W{index + 1:02d}"
         tag_font = self.fonts.font("mono", self.p["index_size"])
         pad_x, pad_y = self.g["tag_padding"]
@@ -120,7 +121,7 @@ class Panels:
         tag_y = py + self.p["index_top"]
         draw.rectangle(self.layout.rect((px, tag_y, tag_w, self.p["index_size"] * self.g["line_height"] + 2 * pad_y)), fill=self.c["lime"])
         draw.text(self.layout.point(px + pad_x, tag_y + pad_y), number, font=tag_font, fill=self.c["ink"], anchor="lt")
-        draw_fitted(layer, self.layout.point(offset, py), fitted, self.c, line_height=self.g["line_height"], highlight_padding=self.s(self.g["highlight_padding"]), fill=self.c["muted"] if window.get("speaker_other") else self.c["fg"])
+        draw_fitted(layer, self.layout.point(offset, py), fitted, self.c, line_height=self.g["line_height"], highlight_padding=self.s(self.g["highlight_padding"]), fill=self.c["muted"] if window.get("speaker_other") or window.get("target_offscreen") else self.c["fg"])
         return layer, self.layout.point(x, y)
 
     @lru_cache(maxsize=32)
@@ -128,7 +129,7 @@ class Panels:
         image = self.canvas()
         window = self.windows[index]
         value = self.narration.get(str(window["id"])) or {}
-        if window.get("speaker_other") or not value.get("quote"):
+        if window.get("speaker_other") or window.get("target_offscreen") or not value.get("quote"):
             return image
         x, _y, width, _height = self.p["commentary"]
         y, size = self.p["quote_y"], self.p["quote_size"]
@@ -193,19 +194,21 @@ class Panels:
             heading_y = y + self.g["heading_gap"]
             self.text(image, self.tr["ui"][field], x, heading_y, width, self.p["choice_heading_size"], color=self.c["muted"])
             value = judgment.get(field) or {}
-            label = self.tr[category].get(value.get("label"), self.tr["ui"]["missing"])
+            ambiguous = uncertain(value,float(self.settings.get('min_judgment_confidence',.4)))
+            label = self.tr['ui']['unclear'] if ambiguous else self.tr[category].get(value.get("label"), self.tr["ui"]["missing"])
+            label_color = self.c['muted'] if ambiguous else self.c['fg']
             if self.layout.kind == "v":
                 certainty = value.get("confidence")
                 certainty_text = self.tr["ui"]["certainty"].format(value=f"{certainty:.2f}" if isinstance(certainty, (float, int)) else self.tr["ui"]["missing"])
                 font = self.fonts.font("mono", self.p["choice_heading_size"], certainty_text)
                 self.text(image, certainty_text, x + width - font.getlength(certainty_text) / self.layout.scale, heading_y, width, self.p["choice_heading_size"], role="mono")
                 label_y = heading_y + self.p["choice_heading_size"] + self.p["choice_top"]
-                self.text(image, label, x, label_y, width, self.p["choice_size"], role="serif_black")
+                self.text(image, label, x, label_y, width, self.p["choice_size"], role="serif_black",color=label_color)
                 content_y = label_y + self.p["choice_size"] + (self.p["choice_bottom"] if field == "intent" else self.p["arc_top"])
             else:
                 font = self.fonts.font("sans_black", self.p["choice_size"])
                 fit = self.fonts.fit(label, "sans_black", self.p["choice_size"], width * self.settings["choice_width_ratio"], 1)
-                self.text(image, label, x + width - fit.font.getlength(label) / self.layout.scale, heading_y, width, self.p["choice_size"], role="sans_black")
+                self.text(image, label, x + width - fit.font.getlength(label) / self.layout.scale, heading_y, width, self.p["choice_size"], role="sans_black",color=label_color)
                 content_y = heading_y + self.p["choice_size"] + self.g["bar_gap"] if field == "intent" else self.p["arc_y"]
             if field == "intent":
                 # Probability bars are drawn with the animated values below.
@@ -247,8 +250,10 @@ class Panels:
             judgment = self.judgments.get(str(window["id"])) or {}
             emotion = (judgment.get("emotion") or {}).get("label")
             color = self.c["emotions"].get(emotion)
-            if color and not window.get("speaker_other"):
-                draw.rectangle(rect, fill=color)
+            if color and not (window.get("speaker_other") or window.get("target_offscreen")):
+                choice = judgment.get('emotion')
+                fill = (*ImageColor.getrgb(color),round(255*float(self.settings.get('uncertain_arc_alpha',.4)))) if uncertain(choice,float(self.settings.get('min_judgment_confidence',.4))) else color
+                draw.rectangle(rect, fill=fill)
                 if emotion not in seen:
                     seen.append(emotion)
             else:
@@ -267,7 +272,7 @@ class Panels:
         size, square = self.p["legend_size"], self.p.get("legend_square", self.g["legend_square"])
         cursor = x
         for emotion in seen:
-            label = self.tr["ui"]["other_legend"] if emotion == "other" else self.tr["emotions"][emotion]
+            label = self.tr["ui"]["unjudged"] if emotion == "other" else self.tr["emotions"][emotion]
             font = self.fonts.font("sans", size)
             entry_width = square + self.g["legend_inner_gap"] + font.getlength(label) / self.layout.scale
             if cursor + entry_width > x + width:
@@ -282,7 +287,7 @@ class Panels:
         window = self.windows[index]
         identifier = str(window["id"])
         judgment = self.judgments.get(identifier)
-        previous = self.judgments.get(str(self.windows[index - 1]["id"])) if index else None
+        previous = self.judgments.get(str(self.windows[panel_index(self.windows,index - 1)]["id"])) if index else None
         amount = progress(elapsed, self.settings["animation"]["number_seconds"])
         for key, (x, y, width) in zip(SCORE_IDS, self.metric_boxes()):
             new, old = score_value(judgment, key), score_value(previous, key)
@@ -360,7 +365,7 @@ class Panels:
     @lru_cache(maxsize=512)
     def status(self, index: int | None, tenth: int, lost: bool) -> tuple[Image.Image, tuple[int, int]]:
         x, y, width, _height = self.p["status"]
-        text = self.tr["ui"]["status"].format(time=tenth / 10, index=(index + 1) if index is not None else 0, total=len(self.windows), target=self.tr["ui"]["lost" if lost else "locked"])
+        text = self.tr["ui"]["status"].format(time=tenth / 10, index=(index + 1) if index is not None else 0, total=len(self.windows), target=self.tr["ui"]["offscreen_short" if index is not None and self.windows[index].get("target_offscreen") else "lost" if lost else "locked"])
         px, py = self.p["status_padding"]
         fit = self.fonts.fit(text, "mono", self.p["status_size"], width - 2 * px, 1)
         w = round(fit.font.getlength(text) + 2 * self.s(px))

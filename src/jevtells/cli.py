@@ -56,6 +56,7 @@ def _arguments() -> argparse.Namespace:
     run_parser.add_argument("--scene", default=None)
     run_parser.add_argument("--lang", choices=("zh", "en"), default="zh")
     run_parser.add_argument("--srt")
+    run_parser.add_argument("--subtitle-source", choices=("auto", "ocr", "asr", "srt"), default="auto")
     run_parser.add_argument("--start", type=float, default=0.0)
     run_parser.add_argument("--duration", type=float)
     run_parser.add_argument("--force", action="store_true")
@@ -126,10 +127,17 @@ def _run_pose(clip: Path, output: Path, force: bool, config: Mapping[str, Any]) 
 
 
 def _run_track(detections: dict[str, Any], output: Path, anchors: list[tuple[int, float]], force: bool, config: Mapping[str, Any]) -> dict[str, Any]:
-    result = _invoke(track.run, detections, output, anchors=anchors, force=force, config=config)
+    result = _invoke(track.run, detections, output, anchors=anchors, force=force, config=config, clip=output / "clip.mp4")
     if isinstance(result, Mapping):
         return dict(result)
     return _load_npz(Path(result) if result is not None else output / "keypoints.npz")
+
+
+def _analysis_windows_changed(current, previous) -> bool:
+    """Coverage is derived metadata; only semantic window changes invalidate API caches."""
+    def semantic(rows):
+        return [{k:v for k,v in row.items() if k != 'target_presence_ratio'} for row in rows]
+    return previous is None or semantic(current) != semantic(previous)
 
 
 def _run_actions(points: dict[str, Any], windows: list[dict[str, Any]], output: Path, force: bool, config: Mapping[str, Any], clip: Path | None = None) -> dict[str, Any]:
@@ -238,6 +246,8 @@ def _finish_run(
     costs = [float(item["cost"]) for item in api_stats.values() if isinstance(item, Mapping) and item.get("cost") is not None]
     api_stats["total_cost"] = sum(costs) if costs else None
     metadata: dict[str, Any] = {"parameters": vars(arguments), "elapsed_s": time.perf_counter() - started, "stage_times_s": stage_times, "encoding": encoding, "language": transcript.get("language"), "target_anchors": anchors, "duration_s": duration, "occupied_hands": actions_result.get("occupied_hands", {}) if isinstance(actions_result, Mapping) else {}, "api": api_stats}
+    if (output / "track_meta.json").exists():
+        metadata["tracking"] = json.loads((output / "track_meta.json").read_text(encoding="utf-8"))
     metadata["models_used"] = {}
     for stage, prefix in (("judge", "jev"), ("narrate", "narrate")):
         identifiers = set()
@@ -284,10 +294,11 @@ def main() -> None:
     intervals = parse_intervals(getattr(arguments, "others_speaking", []))
     blur_rectangles = parse_blurs(getattr(arguments, "blur", []))
     others_changed = False
+    subtitle_changed = False
 
     def force_stage(stage: str) -> bool:
         rerun_from = arguments.from_stage
-        return bool(arguments.force or (rerun_from and _STAGE_ORDER.index(stage) >= _STAGE_ORDER.index(rerun_from)) or (targets_changed and stage in _TARGET_STAGES) or (others_changed and stage in {"judge", "narrate", "render"}))
+        return bool(arguments.force or (rerun_from and _STAGE_ORDER.index(stage) >= _STAGE_ORDER.index(rerun_from)) or (targets_changed and stage in _TARGET_STAGES) or (others_changed and stage in {"actions", "state", "debug", "judge", "narrate", "render"}) or (subtitle_changed and stage in {"segment", "actions", "scene", "state", "debug", "judge", "narrate", "render"}))
 
     started = time.perf_counter()
     stage_times: dict[str, float] = {}
@@ -358,27 +369,55 @@ def main() -> None:
     if arguments.until == "track":
         return
     stage_start = time.perf_counter()
-    transcript = _invoke(asr.run, audio, output, arguments.srt, force_stage("asr"), model_name=config.get("models", {}).get("whisper", "small"))
+    # Acoustic words remain independent of the selected subtitle clock.
+    from .stages import ocr
+    previous_transcript = json.loads((output / "transcript.json").read_text()) if (output / "transcript.json").exists() else None
+    requested = getattr(arguments, "subtitle_source", "auto")
+    detection = None
+    if requested == "ocr" or (requested == "auto" and not arguments.srt and getattr(arguments, "subtitles", "on") == "off"):
+        from .render.reframe import detect_subtitles
+        detection = detect_subtitles(clip, config.get("render", {}).get("reframe", {}))
+    source = ocr.resolve_source(requested, arguments.srt, getattr(arguments, "subtitles", "on"), bool(detection and detection.get("bounds")))
+    audio_transcript = _invoke(asr.run, audio, output, None, force_stage("asr"), model_name=config.get("models", {}).get("whisper", "small"), destination_name="transcript_asr.json")
+    if source == "ocr":
+        transcript = ocr.run(clip, output, audio_transcript["language"], config, force=force_stage("asr"), detection=detection)
+    elif source == "srt":
+        transcript = asr._parse_srt(Path(arguments.srt))
+        transcript["language"] = audio_transcript["language"]
+    else:
+        transcript = dict(audio_transcript)
+    transcript["subtitle_source"] = source
+    subtitle_changed = transcript != previous_transcript
+    (output / "transcript.json").write_text(json.dumps(transcript, ensure_ascii=False, indent=2))
     stage_times["asr"] = time.perf_counter() - stage_start
     if arguments.until == "asr":
         return
     stage_start = time.perf_counter()
-    voice_features = _invoke(voice.run, audio, output, force_stage("voice"), config=config)
+    voice_features = _invoke(voice.run, audio, output, force_stage("voice"), config=config, transcript=audio_transcript)
     stage_times["voice"] = time.perf_counter() - stage_start
     if arguments.until == "voice":
         return
     stage_start = time.perf_counter()
-    shot_list = _invoke(shots.run, clip, output, force_stage("shots"), points=points, config=config)
+    shot_list = _invoke(shots.run, clip, output, force_stage("shots"), points=points, config=config, detections=detections)
     stage_times["shots"] = time.perf_counter() - stage_start
     if arguments.until == "shots":
         return
     stage_start = time.perf_counter()
+    previous_windows = json.loads((output / "windows.json").read_text(encoding="utf-8")) if (output / "windows.json").exists() else None
     windows = _invoke(segment.run, transcript, shot_list, output, force_stage("segment"), config=config)
-    marked = mark_windows(windows, intervals, float(config.get("other_speaker_overlap", 0.5)))
-    others_changed = marked != windows
-    if others_changed:
+    from .stages.presence import split_presence_changes, mark_presence
+    marked = split_presence_changes(windows, shot_list, points, transcript, config)
+    from .stages.speakers import split_speaker_changes
+    marked = split_speaker_changes(marked, intervals, transcript, config)
+    marked = mark_windows(marked, intervals, float(config.get("other_speaker_overlap", 0.5)))
+    presence_edges = [float(b['t0']) for a,b in zip(shot_list,shot_list[1:]) if (a.get('label') == 'target') != (b.get('label') == 'target')]
+    marked = segment.merge_short_windows(marked, config, boundaries=[*[t for interval in intervals for t in interval],*presence_edges])
+    marked = mark_presence(marked, points)
+    others_changed = _analysis_windows_changed(marked, previous_windows)
+    if marked != windows:
         windows = marked
         (output / "windows.json").write_text(json.dumps(windows, ensure_ascii=False, indent=2), encoding="utf-8")
+    voice_features = voice.refresh_window_metrics(voice_features, windows, audio_transcript, output, config)
     stage_times["segment"] = time.perf_counter() - stage_start
     if arguments.until == "segment":
         return
@@ -399,7 +438,7 @@ def main() -> None:
         finish()
         return
     stage_start = time.perf_counter()
-    states = _invoke(state.run, windows, voice_features, scene_text, arguments.speaker, output, force_stage("state"), points, actions=actions_result, config=config, transcript=transcript)
+    states = _invoke(state.run, windows, voice_features, scene_text, arguments.speaker, output, force_stage("state"), points, actions=actions_result, config=config, transcript=audio_transcript)
     stage_times["state"] = time.perf_counter() - stage_start
     stage_start = time.perf_counter()
     debug_kwargs = {"detections": detections, "actions": actions_result, "config": config}

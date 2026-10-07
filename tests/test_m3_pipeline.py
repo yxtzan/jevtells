@@ -142,7 +142,7 @@ def test_cli_cache_from_stage_and_language_do_not_repeat_unrelated_api_calls(tmp
     monkeypatch.setattr(cli, "_run_pose", lambda *a, **kw: {})
     def tracked(detections, output, anchors, force, config):
         (output / "track_meta.json").write_text(json.dumps({"anchors": anchors, "lost_frames": 0}))
-        return {"t": [], "pose": np.empty((0, 33, 4))}
+        return {"fps": 30, "t": np.arange(60) / 30, "pose": np.zeros((60, 33, 4)), "pose_present": np.ones(60, dtype=bool)}
     monkeypatch.setattr(cli, "_run_track", tracked)
     monkeypatch.setattr(cli.asr, "run", lambda *a, **kw: {"language": "en", "segments": []})
     monkeypatch.setattr(cli.voice, "run", lambda *a, **kw: {})

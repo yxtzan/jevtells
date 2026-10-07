@@ -15,12 +15,15 @@ from typing import Any, Mapping, Sequence
 
 import cv2
 import numpy as np
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageColor
 
 from ..actions.features import smooth_zero_phase
 from ..i18n import load_translations
 from ..stages.prepare import _ffmpeg
-from .animation import commentary_at, ease_in_out_cubic, progress, window_at
+from ..stages.framing import faces_at
+from ..stages.certainty import uncertain
+from ..stages.narrate_facts import score_value
+from .animation import commentary_layers, ease_in_out_cubic, progress, window_at, panel_index, panel_window_at
 from .geometry import Layout
 from .labels import schedule
 from .panels import Panels, opacity
@@ -60,6 +63,7 @@ class Composer:
         self.label_cache: dict[tuple[str, str, float], Image.Image] = {}
         self.label_limits: dict[str, float] = {}
         self.subtitle_cache: dict[str, Image.Image] = {}
+        self.person_settings = config.get("shots", {})
         self.visibility = float(config.get("detection", {}).get("pose_visibility_threshold", 0.5))
         smoothing = config.get("smoothing", {})
         smooth_window, polynomial = int(smoothing.get("window_length", 7)), int(smoothing.get("polyorder", 2))
@@ -82,15 +86,29 @@ class Composer:
         self.raw_anchors["head"] = head.copy()
         self.anchors["head"] = smooth_zero_phase(head, smooth_window, polynomial)
         self.card_sides = {}
+        self.card_modes = {}
+        self.card_face_collisions = {}
+        self.base_layout = layout
+        self.all_poses = np.asarray(points.get("poses_all", pose[:, None]), dtype=float)
         for shot in self.shots:
             if layout.kind == "h":
                 start,end=(round(float(shot[k])*float(points.get("fps",30))) for k in ("t0","t1"))
                 core=body_zones(pose[start:end],layout.source,self.visibility).get("torso",shot.get("target_box"))
                 self.card_sides[int(shot["index"])] = card_side(core,layout.source[0],self.p["card"][2]*layout.source[0]/layout.video[2],self.layout.px(settings.get("layout",{}).get("safe_margin",24))/layout.scale*layout.source[0]/layout.video[2])
+                faces = [face for frame in self.all_poses[start:end] for face in faces_at(frame, layout.source, self.visibility, settings=config.get("shots", {}))]
+                scores = {}
+                for side, x in (("right",self.p["card"][0]),("left",settings["layout"]["card_left_x"])):
+                    rect = layout.rect((x,*self.p["card"][1:]))
+                    scores[side] = sum(intersects(rect, layout.source_rect((f[0],f[1],f[2]-f[0],f[3]-f[1]))) for f in faces)
+                self.card_face_collisions[int(shot["index"])] = scores
+                preferred = self.card_sides[int(shot["index"])]
+                side = min(scores, key=lambda k: (scores[k], k != preferred))
+                self.card_sides[int(shot["index"])] = side
+                self.card_modes[int(shot["index"])] = "mini" if scores[side] else "full"
         self.placements: dict[int, dict[str, Any]] = {}
         for shot in self.shots:
             if self.reframe_plan.get("enabled"):
-                self.layout=replace(self.layout,crop=crop_at(self.reframe_plan,float(shot["t0"])))
+                self.layout=self.video_layout(float(shot["t0"]))
             self.placements[int(shot["index"])] = self.place(shot)
         self.layout=layout
 
@@ -132,10 +150,12 @@ class Composer:
         for index in range(start, min(end, len(self.points["pose"]))):
             seconds = index / fps
             if self.reframe_plan.get("enabled"):
-                self.layout = replace(saved_layout, crop=crop_at(self.reframe_plan, seconds))
+                self.layout = self.video_layout(seconds)
             frame_core = body_zones(np.asarray(self.points["pose"])[index], self.layout.source, self.visibility)
-            face = frame_core.get("face_raw")
+            target_faces = faces_at(np.asarray(self.points["pose"])[index:index+1], self.layout.source, self.visibility, raw=True, settings=self.person_settings)
+            face = target_faces[0] if target_faces else None
             face = list(self.layout.source_rect((face[0],face[1],face[2]-face[0],face[3]-face[1]))) if face else None
+            faces = [list(self.layout.source_rect((f[0],f[1],f[2]-f[0],f[3]-f[1]))) for f in faces_at(self.all_poses[index],self.layout.source,self.visibility,raw=True,settings=self.person_settings)]
             mid = self.layout.source_point(frame_core.get("midline", self.layout.source[0]/2), 0)[0]
             wi, _ = window_at(self.windows, seconds)
             lost = not np.isfinite(np.asarray(self.points["pose"])[index,:,:2]).any()
@@ -151,7 +171,9 @@ class Composer:
                 if not np.isfinite(xy).all():continue
                 sprite=self.label_sprite(event,slot)
                 has_label = True
-                samples[slot].append({"anchor":self.layout.source_point(xy[0]*self.layout.source[0],xy[1]*self.layout.source[1]),"face":face,"midline":mid,"size":sprite.size,"zoom":zoom,"offset":self.layout.px(self.p["label_size"]*self.settings["components"]["line_height"]+2*self.settings["label"]["padding"][1])/2})
+                for anchor_xy in (xy,self.anchors[anchor_slot][index]):
+                    if not np.isfinite(anchor_xy).all():continue
+                    samples[slot].append({"anchor":self.layout.source_point(anchor_xy[0]*self.layout.source[0],anchor_xy[1]*self.layout.source[1]),"face":face,"faces":faces,"midline":mid,"size":sprite.size,"zoom":zoom,"offset":self.layout.px(self.p["label_size"]*self.settings["components"]["line_height"]+2*self.settings["label"]["padding"][1])/2})
             if has_label:
                 if face: frame_faces.append(face)
                 frame_mids.append(mid)
@@ -179,8 +201,48 @@ class Composer:
         face=[min(f[0] for f in frame_faces),min(f[1] for f in frame_faces),max(f[2] for f in frame_faces),max(f[3] for f in frame_faces)] if frame_faces else None
         vx,vy,vw,vh=self.layout.video
         cfg=self.settings.get("layout",{})
-        result=select_positions(self.layout.rect((vx,vy,vw,vh)),target,[zone["rect"] for zone in zones],sizes,anchors,margin=self.layout.px(cfg.get("safe_margin",24)),gap=self.layout.px(cfg.get("stack_gap",12)),step=self.layout.px(cfg.get("candidate_step",12)),soft=soft,samples=samples,midline=midline,face=face,exemption=self.layout.px(60),fraction=self.settings["label"]["leader_fraction"])
-        return {"shot_index":shot["index"],"t0":shot["t0"],"t1":shot["t1"],"sizes":sizes,"anchors":anchors,"sample_counts":{slot:len(v) for slot,v in samples.items()},"forbidden":zones,"card_side":self.card_sides.get(int(shot["index"])),**result}
+        result=select_positions(self.layout.rect((vx,vy,vw,vh)),target,[zone["rect"] for zone in zones],sizes,anchors,margin=self.layout.px(cfg.get("safe_margin",24)),gap=self.layout.px(cfg.get("stack_gap",12)),step=self.layout.px(cfg.get("candidate_step",12)),soft=soft,samples=samples,midline=midline,face=face,exemption=self.layout.px(60),fraction=self.settings["label"]["leader_fraction"],max_face_crossing_ratio=float(cfg.get('max_face_crossing_ratio',0)),fixed_leader_width=True)
+        return {"shot_index":shot["index"],"t0":shot["t0"],"t1":shot["t1"],"sizes":sizes,"anchors":anchors,"sample_counts":{slot:len(v) for slot,v in samples.items()},"forbidden":zones,"card_side":self.card_sides.get(int(shot["index"])),"card_mode":self.card_modes.get(int(shot["index"])),"card_face_collisions":self.card_face_collisions.get(int(shot["index"])),**result}
+
+    def video_layout(self, seconds: float) -> Layout:
+        shot = next((s for s in self.shots if float(s["t0"]) <= seconds < float(s["t1"])), self.shots[-1])
+        planned = next((s for s in self.reframe_plan.get("shots",[]) if float(s["t0"])<=seconds<float(s["t1"])),shot)
+        crop = crop_at(self.reframe_plan, seconds)
+        if crop is None or abs(crop[2]-self.base_layout.source[0]) < 1e-6:
+            return Layout.create(self.base_layout.kind, self.settings, self.base_layout.source)
+        strip = self.reframe_plan.get('mode') == 'strip'
+        amount = (self.base_layout.source[0]-crop[2])/(self.base_layout.source[0]-self.base_layout.source[1]*4/3)
+        return Layout.create(self.base_layout.kind, self.settings, self.base_layout.source, crop,
+                             strip_y=crop[3] if strip else None, strip_gap=8*amount)
+
+    def card_state(self, seconds: float) -> tuple[str, tuple[float, float, float, float]]:
+        shot = next((s for s in self.shots if float(s["t0"]) <= seconds < float(s["t1"])), self.shots[-1])
+        wi, gap = panel_window_at(self.windows, seconds)
+        window = self.windows[wi] if wi is not None else {}
+        mode = "collapsed" if wi is None or gap or window.get("speaker_other") or window.get("target_offscreen") else self.card_modes.get(int(shot["index"]), "full")
+        x, y, width, height = self.p["card"]
+        x = self.card_x(seconds)
+        if mode != "full":
+            height = float(self.settings["layout"].get("compact_card_height", 28))
+            if mode == "mini" or self.card_modes.get(int(shot["index"])) == "mini":
+                y = self.layout.video[1] + self.layout.video[3]*(1-self.settings["subtitle_exclusion_ratio"]) - height - self.settings["layout"]["stack_gap"]
+        return mode, (x,y,width,height)
+
+    def compact_card(self, index: int | None, mode: str, rect: Sequence[float]) -> Image.Image:
+        image = Image.new("RGBA", self.layout.output)
+        x,y,w,h = rect
+        ImageDraw.Draw(image).rectangle(self.layout.rect(rect),fill=(*ImageColor.getrgb(self.c["ink"]),round(255*self.settings["panel_opacity"])))
+        window = self.windows[index] if index is not None else {}
+        if mode == "mini":
+            judgment = self.judgments.get(str(window.get("id"))) or {}
+            numbers = " / ".join(f"{score_value(judgment,k):.2f}" if score_value(judgment,k) is not None else "—" for k in ("confidence","focus","tension"))
+            intent = judgment.get("intent") or {}
+            text = numbers + " · " + (self.tr["ui"]["unclear"] if uncertain(intent,self.settings.get("min_judgment_confidence",.4)) else self.tr["intents"].get(intent.get("label"),self.tr["ui"]["missing"]))
+        else:
+            reason = "other_legend" if window.get("speaker_other") else "offscreen_short" if window.get("target_offscreen") else "unjudged"
+            text = "JEV · " + self.tr["ui"][reason]
+        self.panels.text(image,text,x+8,y+5,w-16,self.settings["layout"].get("compact_card_size",14),color=self.c["muted"] if mode=="collapsed" else self.c["fg"])
+        return image
 
     def card_x(self, seconds: float) -> float:
         default=self.p.get("card",[0])[0]
@@ -194,7 +256,7 @@ class Composer:
             return current
         before=position(index-1)
         amount=ease_in_out_cubic((seconds-float(self.shots[index]["t0"]))/self.settings["animation"]["card_seconds"])
-        return before+(current-before)*amount
+        return current
 
     def label_sprite(self, event: Mapping[str, Any], slot: str) -> Image.Image:
         available=self.label_limits.get(str(event["id"]),self.p["label_width"])
@@ -265,12 +327,13 @@ class Composer:
             # Keep the fixed slot but cap its right edge for long English text.
             x = min(x, image.width - sprite.width)
             body_height = self.layout.px(self.p["label_size"] * self.settings["components"]["line_height"] + 2 * label["padding"][1])
-            start = (x + sprite.width if anchor[0] >= x+sprite.width/2 else x, y + round(body_height * zoom / 2))
+            fixed_width = placement["sizes"][slot][0] if placement else sprite.width
+            start = (x + fixed_width if anchor[0] >= x+fixed_width/2 else x, y + round(body_height * zoom / 2))
             elbow = (round(start[0] + (anchor[0] - start[0]) * label["leader_fraction"]), start[1])
             rect=[x,y,x+sprite.width,y+sprite.height]
             raw_xy=self.raw_anchors["head" if event.get("limb") in {"head","body"} else slot][point_index]
             real_anchor=self.layout.source_point(raw_xy[0]*self.layout.source[0],raw_xy[1]*self.layout.source[1]) if np.isfinite(raw_xy).all() else anchor
-            real_start=(x+sprite.width if real_anchor[0]>=x+sprite.width/2 else x,start[1])
+            real_start=(x+fixed_width if real_anchor[0]>=x+fixed_width/2 else x,start[1])
             real_elbow=(round(real_start[0]+(real_anchor[0]-real_start[0])*label["leader_fraction"]),real_start[1])
             path=[start,elbow,anchor]
             real_path=[real_start,real_elbow,real_anchor]
@@ -281,8 +344,17 @@ class Composer:
             radius = self.layout.px(label["point_radius"])
             ld.ellipse((anchor[0] - radius, anchor[1] - radius, anchor[0] + radius, anchor[1] + radius), fill=color, outline=self.c["ink"], width=max(1, self.layout.px(label["point_outline"])))
             image.alpha_composite(leader)
-            image.alpha_composite(opacity(sprite, alpha), (x, y))
-            self.audit["labels"].append({"slot": slot, "event": event["id"], "rect": [x, y, x + sprite.width, y + sprite.height], "leader": [list(p) for p in path], "actual_hand_leader": [list(p) for p in real_path], "point": list(anchor), "point_clamped": anchor != projected_anchor, "relaxed": bool(placement and placement["selected"][slot]["relaxed"]), "forced": bool(placement and placement["selected"][slot]["forced"]), "fallback": False})
+            if event.get('_replaces') and float(event.get('_replace_amount',1)) < 1:
+                amount = float(event['_replace_amount'])
+                old_sprite = self.label_sprite(event['_replaces'],slot)
+                common = Image.new('RGBA',(max(sprite.width,old_sprite.width),max(sprite.height,old_sprite.height)))
+                old_layer = Image.new('RGBA',common.size);old_layer.alpha_composite(old_sprite)
+                new_layer = Image.new('RGBA',common.size);new_layer.alpha_composite(sprite)
+                image.alpha_composite(opacity(Image.blend(old_layer,new_layer,amount),alpha),(x,y))
+                rect = [x,y,x+common.width,y+common.height]
+            else:
+                image.alpha_composite(opacity(sprite, alpha), (x, y))
+            self.audit["labels"].append({"slot": slot, "event": event["id"], "rect": rect, "leader": [list(p) for p in path], "actual_hand_leader": [list(p) for p in real_path], "point": list(anchor), "point_clamped": anchor != projected_anchor, "relaxed": bool(placement and placement["selected"][slot]["relaxed"]), "forced": bool(placement and placement["selected"][slot]["forced"]), "fallback": False})
 
     def forbidden(self, seconds: float) -> list[dict[str, Any]]:
         zones = []
@@ -290,10 +362,9 @@ class Composer:
         def zone(name: str, rect: Sequence[float]) -> None:
             zones.append({"name": name, "rect": list(self.layout.rect(rect))})
         index = min(len(self.points["pose"])-1, max(0, round(seconds*float(self.points.get("fps",30)))))
-        for name, value in body_zones(np.asarray(self.points["pose"])[index], self.layout.source, self.visibility).items():
-            if name == "face":
-                x0,y0,x1,y1=value
-                zones.append({"name": name, "rect": list(self.layout.source_rect((x0,y0,x1-x0,y1-y0)))})
+        for face_index, value in enumerate(faces_at(self.all_poses[index], self.layout.source, self.visibility, settings=self.person_settings)):
+            x0,y0,x1,y1=value
+            zones.append({"name": "face" if face_index==0 else f"face:{face_index}", "rect": list(self.layout.source_rect((x0,y0,x1-x0,y1-y0)))})
         ratio = self.settings["subtitle_exclusion_ratio"]
         if self.layout.strip_video:
             zone("subtitle_strip", self.layout.strip_video)
@@ -305,8 +376,8 @@ class Composer:
         for rect in ((vx,vy,vw,margin),(vx,vy,margin,vh),(vx+vw-margin,vy,margin,vh),(vx,vy+vh-margin,vw,margin)):
             zone("edge", rect)
         if self.layout.kind == "h":
-            cx,cy,cw,ch=self.p["card"]
-            zone("card",(self.card_x(seconds),cy,cw,ch))
+            _mode, card = self.card_state(seconds)
+            zone("card",card)
             zone("commentary",self.p["commentary"])
             # Use the capsule's actual bounds rather than its maximum text slot.
             wi,_gap=window_at(self.windows,seconds)
@@ -372,11 +443,10 @@ class Composer:
 
     def frame(self, source: Image.Image, seconds: float, point_index: int) -> Image.Image:
         if self.reframe_plan.get("enabled"):
-            self.layout=replace(self.layout,crop=crop_at(self.reframe_plan,seconds))
+            self.layout=self.video_layout(seconds)
         self.audit = {"seconds": seconds, "output": list(self.layout.output), "labels": [], "forbidden": self.forbidden(seconds)}
         cores = body_zones(np.asarray(self.points["pose"])[point_index], self.layout.source, self.visibility)
-        face = cores.get("face_raw")
-        self.audit["leader_zones"] = [{"name":"face","rect":list(self.layout.source_rect((face[0],face[1],face[2]-face[0],face[3]-face[1])))}] if face else []
+        self.audit["leader_zones"] = [{"name":"face","rect":list(self.layout.source_rect((f[0],f[1],f[2]-f[0],f[3]-f[1])))} for f in faces_at(self.all_poses[point_index], self.layout.source, self.visibility, raw=True, settings=self.person_settings)]
         self.audit["midline"] = self.layout.source_point(cores["midline"],0)[0] if "midline" in cores else None
         self.audit["endpoint_exemption"] = self.layout.px(60)
         source = blur_frame(source, self.blur, self.layout.source, self.settings["blur_radius"])
@@ -388,25 +458,59 @@ class Composer:
         x, y, width, height = self.layout.video
         image = Image.new("RGBA", self.layout.output, self.c["ink"])
         image.paste(source.resize((self.layout.px(width), self.layout.px(height)), Image.Resampling.BICUBIC), self.layout.point(x, y))
-        if self.layout.strip_video and self.layout.strip_y is not None:
+        if self.layout.strip_video and self.layout.strip_y is not None and self.layout.px(self.layout.strip_video[3]) > 0 and round(self.layout.strip_y*original_source.height/self.layout.source[1]) < original_source.height:
             sy=original_source.height/self.layout.source[1]
             strip=original_source.crop((0,round(self.layout.strip_y*sy),original_source.width,original_source.height))
             sx,sy,sw,sh=self.layout.strip_video
             image.paste(strip.resize((self.layout.px(sw),self.layout.px(sh)),Image.Resampling.BICUBIC),self.layout.point(sx,sy))
         image.alpha_composite(self.panels.base)
-        index, gap = window_at(self.windows, seconds)
+        index, gap = panel_window_at(self.windows, seconds)
         attenuation = self.settings["gap_opacity"] if gap else 1.0
         if index is not None:
             elapsed = seconds - float(self.windows[index]["t0"])
             analysis=opacity(self.panels.analysis(index, elapsed), attenuation)
             offset=self.layout.px(self.card_x(seconds)-self.p["card"][0]) if self.layout.kind=="h" else 0
-            image.alpha_composite(analysis,(offset,0))
+            if self.layout.kind == "h":
+                mode, rect = self.card_state(seconds)
+                self.audit["cards"] = [{"mode":mode,"rect":list(self.layout.rect(rect))}]
+                compact = self.compact_card(index,mode,rect) if mode != "full" else None
+                duration = float(self.settings["animation"].get("card_collapse_seconds", .3))
+                before = self.windows[panel_index(self.windows,index-1)] if index else self.windows[index]
+                was_collapsed = bool(before.get("speaker_other") or before.get("target_offscreen"))
+                changed = (mode == "collapsed") != was_collapsed
+                if changed and elapsed < duration and self.card_modes.get(int(next(s for s in self.shots if s["t0"]<=seconds<s["t1"])["index"])) != "mini":
+                    amount = ease_in_out_cubic(elapsed/duration)
+                    opened = amount if mode=="full" else 1-amount
+                    cx,cy,cw,ch=self.p["card"]
+                    full = analysis.crop(self.layout.rect((cx,cy,cw,ch)))
+                    height = self.layout.px(rect[3]+(ch-rect[3])*opened) if mode=="collapsed" else self.layout.px(self.settings["layout"]["compact_card_height"]+(ch-self.settings["layout"]["compact_card_height"])*opened)
+                    self.audit['cards'][0]['rect'] = list(self.layout.rect((rect[0],rect[1],rect[2],height/self.layout.scale)))
+                    image.alpha_composite(opacity(full.resize((full.width,max(1,height))),opened),self.layout.point(rect[0],rect[1]))
+                    if compact is None:
+                        compact = self.compact_card(index-1 if index else index,'collapsed',(rect[0],rect[1],rect[2],self.settings['layout']['compact_card_height']))
+                    image.alpha_composite(opacity(compact,1-opened))
+                elif changed and elapsed < duration and compact is not None:
+                    # Mini cards and collapsed tags share one row; keep their
+                    # safe geometry while changing the content over 300ms.
+                    old_mode = 'collapsed' if was_collapsed else 'mini'
+                    old_compact = self.compact_card(index-1 if index else index,old_mode,rect)
+                    image.alpha_composite(Image.blend(old_compact,compact,ease_in_out_cubic(elapsed/duration)))
+                elif compact is not None:
+                    image.alpha_composite(compact)
+                else:
+                    image.alpha_composite(analysis,(offset,0))
+            else:
+                image.alpha_composite(analysis)
             animation = self.settings["animation"]
-            sentence, amount, offset = commentary_at(index, elapsed, animation)
-            image.alpha_composite(opacity(self.panels.quote(sentence), amount * attenuation))
-            layer, position = self.panels.commentary(sentence)
-            position = (position[0], position[1] + self.layout.px(offset))
-            image.alpha_composite(opacity(layer, amount * attenuation), position)
+            layers = commentary_layers(self.windows,index,elapsed,animation)
+            for sentence, amount, offset in layers:
+                if amount <= 0 and len(layers) > 1:
+                    continue
+                image.alpha_composite(opacity(self.panels.quote(sentence), amount * attenuation))
+                layer, position = self.panels.commentary(sentence)
+                position = (position[0], position[1] + self.layout.px(offset))
+                image.alpha_composite(opacity(layer, amount * attenuation), position)
+
         else:
             layer, position = self.panels.commentary(None)
             image.alpha_composite(layer, position)
@@ -475,6 +579,12 @@ def run(clip: Path, out: Path, windows: Sequence[Mapping[str, Any]], points: Map
     actions = read("actions.json", [])
     events = actions.get("events", []) if isinstance(actions, Mapping) else actions
     transcript = read("transcript.json", {})
+    detection_path = out / "detections.npz"
+    if detection_path.exists():
+        with np.load(detection_path, allow_pickle=False) as detected:
+            if "poses_all" in detected:
+                points = {**points, "poses_all": detected["poses_all"]}
+    settings["min_judgment_confidence"] = float(config.get("judgment",{}).get("min_confidence",.4))
     previous_meta = read("render_meta.json", {})
     results: dict[str, Any] = dict(previous_meta)
     for kind in (("h", "v") if layout == "both" else (layout,)):
@@ -511,7 +621,11 @@ def run(clip: Path, out: Path, windows: Sequence[Mapping[str, Any]], points: Map
                     effective["components"].update(effective["reframe_components"])
                     if mode["mode"] == "strip":
                         for shot in plan["shots"]:
-                            shot["height"]=mode["strip_y"]
+                            if not shot.get("multi_person"):
+                                shot["height"]=mode["strip_y"]
+                        for previous, shot in zip(plan['shots'],plan['shots'][1:]):
+                            if shot.get('transition'):
+                                shot['transition']['height'] = previous['height']
             (out / f"reframe_{kind}.json").write_text(json.dumps(plan,indent=2))
             geometry = Layout.create(kind, effective, source_size or frame_size,crop_at(plan,0),strip_y=plan.get("strip_y") if plan.get("mode")=="strip" else None)
             painter = Composer(effective, geometry, windows, points, events, judgments, narration, transcript, title=title, sources=_sources(out, settings, config, lang), lang=lang, blur=blur, subtitles=subtitles, config=config, shots=shot_list,reframe_plan=plan)

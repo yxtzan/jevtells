@@ -44,14 +44,20 @@ tracking:
   area_ratio_min: 0.50
   area_ratio_max: 2.00
   appearance_similarity: 0.70
-  appearance_size_ratio_min: 0.50
-  appearance_size_ratio_max: 2.00
+  appearance_margin: 0.10
+  appearance_probe_frames: 10
+  appearance_reference_seconds: 1.0
+  appearance_reference_stride: 3
 
 windows:
+  panel_hold_seconds: 1.0
+  split_boundary_tolerance_frames: 0.5
   min_seconds: 2.0
   max_seconds: 5.0
 
 voice:
+  relative_rate_slow: 0.85
+  relative_rate_fast: 1.15
   sample_rate: 16000
   hop_seconds: 0.05
   f0_min_hz: 65.0
@@ -80,8 +86,13 @@ actions:
   posture_window: 5.0
   posture_ratio: 0.70
   min_action_duration: 0.20
+  settling_after_cut_seconds: 0.30
   movement_threshold: 0.12
   state_threshold: 0.65
+  review_limit: null
+  hands_missing_ratio: 0.50
+  pinch_tip_palm_ratio: 0.35
+  pinch_extended_fingers: 2
   fist_max_openness: 0.20
   fist_max_tip_palm_ratio: 1.00
   point_frame_ratio: 0.80
@@ -104,12 +115,18 @@ lean_in:
 shots:
   histogram_threshold: 0.45
   histogram_grid: 2
+  persistence_frames: 3
   subtitle_exclusion_ratio: 0.20
   min_seconds: 0.50
   target_padding_shoulder: 0.15
   far_shoulder_ratio: 0.15
   target_presence_ratio: 0.50
   min_target_height_ratio: 0.25
+  person_edge_margin: 0.02
+  multi_height_ratio: 0.35
+  multi_frame_ratio: 0.50
+  multi_smooth_seconds: 0.20
+  multi_switch_seconds: 1.50
 
 colour:
   target: '#00E5FF'
@@ -128,7 +145,11 @@ other_speaker_overlap: 0.5
 stop_on_api_error: true
 
 # Dimensions are CSS/design pixels. Layout.scale multiplies every dimension.
+judgment:
+  min_confidence: 0.40
+
 render:
+  uncertain_arc_alpha: 0.40
   reframe:
     max_offset: 0.08
     subtitle_strip: 0.20
@@ -144,6 +165,7 @@ render:
     pan_exit_ratio: 0.10
     pan_wait_seconds: 1
     pan_seconds: 0.60
+    zoom_seconds: 0.60
     visibility: 0.50
   reframe_components:
     line_height: 1.30
@@ -185,11 +207,14 @@ render:
     footer_size: 13
     footer_top: 8
   layout:
+    max_face_crossing_ratio: 0.0
     card_left_x: 32
     safe_margin: 24
     stack_gap: 12
     candidate_step: 12
     max_leader_ratio: 0.45
+    compact_card_height: 28
+    compact_card_size: 14
   model_names:
     'typesafe/jev-1.13*': Jev 1.13
     'google/gemini-3.1-flash-lite*': Gemini Flash Lite
@@ -235,11 +260,13 @@ render:
     mono: assets/fonts/NotoSansMono-Regular.ttf
   animation:
     card_seconds: 0.40
+    card_collapse_seconds: 0.30
     number_seconds: 0.30
     spark_seconds: 0.30
     commentary_in_seconds: 0.25
     commentary_out_seconds: 0.15
     commentary_offset: 12
+    label_replace_seconds: 0.10
     label_in_seconds: 0.15
     label_hold_seconds: 0.80
     label_out_seconds: 0.20
@@ -387,3 +414,29 @@ render:
     footer: [32, 700, 1216, 20]
     footer_size: 11
     footer_padding: [8, 1]
+
+ocr:
+  confidence: 0.80
+  change_ratio: 0.25
+  min_seconds: 0.12
+  min_votes: 2
+  merge_gap: 0.35
+  sample_fractions: [0.35, 0.50, 0.65]
+  crop_padding: 6
+  threads: 2
+  text_value: 180
+  text_saturation: 90
+  min_component_height: 8
+  min_component_area: 8
+  component_padding: 3
+  background_value: 120
+  background_ratio: 0.15
+  pixel_tolerance: 1
+  word_gap_height_ratio: 0.26
+  min_characters: 2
+  min_characters_zh: 1
+  unclip_ratio: 2.0
+  word_background_ratio: 0.50
+  word_colour_ratio: 0.30
+  word_text_value: 100
+  word_text_saturation: 50

@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any, Mapping
 
 import cv2
-import mediapipe as mp
 import numpy as np
 from ..resources import asset_path
 
@@ -35,6 +34,7 @@ def run(clip: Path, out: Path, force: bool = False, model_dir: Path | None = Non
     if destination.exists() and not force:
         with np.load(destination, allow_pickle=False) as loaded:
             return {key: loaded[key] for key in loaded.files}
+    import mediapipe as mp
     settings = dict(config or {})
     detection = settings.get("detection", {}) if isinstance(settings.get("detection", {}), Mapping) else {}
     models = settings.get("models", {}) if isinstance(settings.get("models", {}), Mapping) else {}

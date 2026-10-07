@@ -18,6 +18,10 @@ def frame_violations(frame: Mapping[str, Any]) -> list[dict[str, Any]]:
                 collisions.append("label:" + other["slot"])
         if collisions:
             failures.append({"slot": label["slot"], "event": label["event"], "zones": collisions, "fallback": bool(label.get("fallback"))})
+    for card in frame.get('cards', []):
+        faces = [zone['name'] for zone in frame.get('forbidden', []) if zone['name'].startswith('face') and intersects(card['rect'],zone['rect'])]
+        if faces:
+            failures.append({'slot':'card','event':card.get('mode'),'zones':faces,'fallback':False})
     return failures
 
 
@@ -71,10 +75,11 @@ def line_flags(path, face, midline, radius=60):
 
 def leader_violations(frame: Mapping[str, Any]) -> list[dict[str, Any]]:
     failures = []
-    face = next((z['rect'] for z in frame.get('leader_zones', []) if z['name']=='face'), None)
+    faces = [z['rect'] for z in frame.get('leader_zones', []) if z['name'].startswith('face')]
     for label in frame.get('labels', []):
         path = label.get('actual_hand_leader', label.get('leader', []))
-        face_hit, mid_hit = line_flags(path, face, frame.get('midline'), frame.get('endpoint_exemption',0))
+        flags = [line_flags(path, face, frame.get('midline'), frame.get('endpoint_exemption',0)) for face in faces or [None]]
+        face_hit, mid_hit = any(f[0] for f in flags), any(f[1] for f in flags)
         if face_hit:
             failures.append({'slot':label['slot'],'event':label['event'],'zone':'face'})
         if mid_hit:

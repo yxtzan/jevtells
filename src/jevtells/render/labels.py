@@ -34,4 +34,15 @@ def schedule(events: Sequence[Mapping[str, Any]], seconds: float, settings: Mapp
         slots = ["left", "right"] if limb == "both_hands" else ["left" if limb in {"right_hand", "head", "body"} else "right"]
         for slot in slots:
             result[slot] = (event, opacity, scale)
+    for slot in ('left','right'):
+        candidates = [e for e in sorted(events,key=lambda e:(float(e['t0']),str(e.get('id','')))) if not e.get('far') and e.get('type') in settings['label_types'] and e.get('magnitude',e.get('amplitude'))!='small' and float(e['t0'])<=seconds and seconds<float(e['t1'])+settings['animation']['label_hold_seconds']+settings['animation']['label_out_seconds'] and (e.get('limb')=='both_hands' or slot==('left' if e.get('limb') in {'right_hand','head','body'} else 'right'))]
+        if not candidates:continue
+        event = candidates[-1]
+        prior = candidates[-2] if len(candidates)>1 else None
+        if prior and prior.get('limb')==event.get('limb') and prior.get('shot_index')==event.get('shot_index') and visibility(prior,float(event['t0'])+1e-8,settings['animation'])[0]>0:
+            alpha,scale=visibility(event,seconds,settings['animation'])
+            if seconds<float(event['t1'])+settings['animation']['label_hold_seconds']:
+                alpha,scale=1.,1.
+            replaced = {**event,'_replaces':prior,'_replace_amount':min(1.,(seconds-float(event['t0']))/float(settings['animation'].get('label_replace_seconds',.1)))}
+            result[slot]=(replaced,alpha,scale)
     return result

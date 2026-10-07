@@ -28,10 +28,10 @@ def test_hsv_cuts_and_short_shot_merge_on_actual_encoded_clip(tmp_path):
     clip = tmp_path / "clip.mp4"
     subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=red:s=320x180:r=30:d=1", "-f", "lavfi", "-i", "color=blue:s=320x180:r=30:d=0.2", "-f", "lavfi", "-i", "color=green:s=320x180:r=30:d=1", "-filter_complex", "[0:v][1:v][2:v]concat=n=3:v=1:a=0[v]", "-map", "[v]", "-c:v", "libx264", str(clip)], check=True)
     result = run(clip, tmp_path, config=load_config())
-    assert [shot["t0"] for shot in result] == [0, 1]
+    assert [shot["t0"] for shot in result] == [0, 1.2]
     assert result[1]["t1"] == 2.2 and result[1]["cut_at_start"]
     assert result[0]["target_box"] is None and result[0]["far"] is None
-    assert json.loads((tmp_path / "shots_meta.json").read_text())["histogram_cuts"] == [1, 1.2]
+    assert json.loads((tmp_path / "shots_meta.json").read_text())["histogram_cuts"] == [1.2]
 
 
 def test_target_activity_bounds_use_percentiles_visibility_and_padding():

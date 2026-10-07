@@ -257,6 +257,18 @@ def _summary(events: Sequence[Mapping[str, Any]], occupied_hands: Mapping[str, A
     return "\n".join(lines) + "\n"
 
 
+def discard_after_cuts(events, cuts, settling):
+    kept, discarded = [], []
+    for event in events:
+        start = float(event['t0'])
+        cut = next((cut for cut in reversed(cuts) if cut <= start < cut+settling), None)
+        if cut is None:
+            kept.append(event)
+        else:
+            discarded.append({**event, 'reason':'settling_after_cut', 'cut_seconds':cut})
+    return kept, discarded
+
+
 def run(
     points: Mapping[str, Any],
     windows: Sequence[Mapping[str, Any]],
@@ -276,22 +288,35 @@ def run(
         updated = _far_events(payload["events"], out)
         if updated != payload["events"]:
             payload["events"] = updated
-            destination.write_text(json.dumps(updated, ensure_ascii=False, indent=2))
+            destination.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
         return payload
 
     settings = _settings(config)
-    features = extract_features(points, settings)
-    detected = detect_actions(features, windows, settings)
-    events = [_normalise_event(item, windows, index) for index, item in enumerate(detected, 1)]
+    shots_path = out / 'shots.json'
+    shot_list = json.loads(shots_path.read_text()) if shots_path.exists() else []
+    fps = float(points.get('fps',30))
+    cuts = sorted({round(float(s['t0'])*fps) for s in shot_list if s.get('cut_at_start')})
+    features = extract_features({**points, 'cut_frames':cuts}, settings)
+    if cuts:
+        detected = []
+        total = len(features['t'])
+        for a,b in zip([0,*cuts],[*cuts,total]):
+            piece = {k:(v[a:b] if isinstance(v,np.ndarray) and v.ndim and len(v)==total else v) for k,v in features.items()}
+            t0,t1 = a/fps,b/fps
+            piece_windows = [{**w,'t0':max(t0,float(w['t0'])),'t1':min(t1,float(w['t1']))} for w in windows if float(w['t0'])<t1 and float(w['t1'])>t0]
+            detected.extend(detect_actions(piece,piece_windows,settings))
+    else:
+        detected = detect_actions(features, windows, settings)
+    settling = float(settings.get('settling_after_cut_seconds', .3))
+    kept, discarded = discard_after_cuts(detected, [frame/fps for frame in cuts], settling)
+    events = [_normalise_event(item, windows, index) for index, item in enumerate(kept, 1)]
     events.sort(key=lambda item: (float(item["t0"]), str(item["id"])))
     for index, event in enumerate(events, 1):
         event["id"] = f"A{index:03d}"
     events = _far_events(events, out)
 
     out.mkdir(parents=True, exist_ok=True)
-    # The persisted boundary file follows SPEC §6.6 (a list).  The return
-    # value keeps the CLI's stage adapter compatibility with its M1 mapping
-    # convention.
+    # Keep rejected detections beside retained events for an auditable filter.
     occupied_mask = np.asarray(features.get("occupied_mask", []), dtype=bool)
     occupied_hands: dict[str, Any] = {}
     if occupied_mask.ndim == 2:
@@ -302,8 +327,8 @@ def run(
                     "start": float(features["t"][np.flatnonzero(occupied_mask[:, side])[0]]),
                     "end": float(features["t"][np.flatnonzero(occupied_mask[:, side])[-1]]),
                 }
-    payload = {"events": events, "occupied_hands": occupied_hands}
-    destination.write_text(json.dumps(events, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
+    payload = {"events": events, "discarded": discarded, "occupied_hands": occupied_hands}
+    destination.write_text(json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
 
     review = out / "actions_review"
     review.mkdir(parents=True, exist_ok=True)
@@ -313,10 +338,12 @@ def run(
         previous.unlink()
     times = np.asarray(features.get("t", []), dtype=float)
     requested_indices: list[int] = []
-    for event in events[:30]:
+    limit = settings.get("review_limit")
+    review_events = events if limit is None else events[:max(0,int(limit))]
+    for event in review_events:
         requested_indices.extend(_nearest_indices(times, (event["t0"], (event["t0"] + event["t1"]) / 2, event["t1"])))
     frames = _read_video_frames(Path(clip) if clip is not None else None, requested_indices)
-    for event in events[:30]:
+    for event in review_events:
         _review_image(features, points, event, review / f"{event['id']}_{event['type']}.png", frames)
     (out / "actions_summary.txt").write_text(_summary(events, occupied_hands), encoding="utf-8")
     return payload

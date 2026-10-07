@@ -210,7 +210,7 @@ def _array_from_npz(source: Path | Mapping[str, Any]) -> dict[str, Any]:
     return dict(source)
 
 
-def run(detections: Path | Mapping[str, Any], out: Path, anchors: Sequence[tuple[int, float]] | None = None, force: bool = False, config: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def run(detections: Path | Mapping[str, Any], out: Path, anchors: Sequence[tuple[int, float]] | None = None, force: bool = False, config: Mapping[str, Any] | None = None, clip: Path | None = None) -> dict[str, Any]:
     """Write ``keypoints.npz`` from all-person detector output."""
     destination = out / "keypoints.npz"
     if destination.exists() and not force:
@@ -223,7 +223,7 @@ def run(detections: Path | Mapping[str, Any], out: Path, anchors: Sequence[tuple
                 cached_anchors = [[int(item[0]), float(item[1])] for item in payload.get("anchors", [])]
             except (OSError, ValueError, TypeError, KeyError, IndexError):
                 cached_anchors = None
-        if cached_anchors == requested:
+        if cached_anchors == requested and payload.get("identity_version") == 1 and payload.get("config") == dict(config or {}):
             with np.load(destination, allow_pickle=False) as loaded:
                 return {key: loaded[key] for key in loaded.files}
     data = _array_from_npz(detections)
@@ -234,7 +234,16 @@ def run(detections: Path | Mapping[str, Any], out: Path, anchors: Sequence[tuple
     fps = float(np.asarray(data.get("fps", 30.0)).reshape(-1)[0])
     width = float(np.asarray(data.get("width", 1.0)).reshape(-1)[0])
     height = float(np.asarray(data.get("height", 1.0)).reshape(-1)[0])
-    indices = track_people(poses, anchors, fps, width, height, config)
+    identity_meta: dict[str, Any] = {}
+    clip = clip or out / "clip.mp4"
+    if clip.exists() and len(poses):
+        from .appearance import read_appearances, track_appearance
+        from .shots import detect_hard_cuts
+        edits = detect_hard_cuts(clip, (config or {}).get("shots", {}))
+        descriptors = read_appearances(clip, poses, _config(config).visibility_threshold)
+        indices, identity_meta = track_appearance(poses, descriptors, anchors or [(1, 0.0)], edits["cuts"], fps, width, height, config or {})
+    else:
+        indices = track_people(poses, anchors, fps, width, height, config)
     target_pose = np.full((len(indices), poses.shape[2], poses.shape[3]), np.nan, dtype=np.float32)
     target_hands = np.full((len(indices), 2, hands.shape[2], hands.shape[3]), np.nan, dtype=np.float32) if hands.ndim == 4 else np.full((len(indices), 2, 21, 3), np.nan, dtype=np.float32)
     for frame, person_index in enumerate(indices):
@@ -271,7 +280,10 @@ def run(detections: Path | Mapping[str, Any], out: Path, anchors: Sequence[tuple
     }
     out.mkdir(parents=True, exist_ok=True)
     np.savez(destination, **result)
-    (out / "track_meta.json").write_text(json.dumps({"anchors": list(anchors or [(1, 0.0)]), "lost_frames": int(np.sum(indices < 0))}, ensure_ascii=False, indent=2))
+    from ..schemas import TrackMetadata
+    metadata = {"anchors": list(anchors or [(1, 0.0)]), "lost_frames": int(np.sum(indices < 0)), "identity_version": 1, "config": dict(config or {}), **identity_meta}
+    TrackMetadata.model_validate(metadata)
+    (out / "track_meta.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2))
     return result
 
 

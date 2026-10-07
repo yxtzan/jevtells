@@ -35,6 +35,9 @@ scores:
   focus: focus
   tension: tension
 ui:
+  unclear: Unclear
+  unjudged: Not judged
+  offscreen_short: Target offscreen
   disclaimer: Uncalibrated · For demonstration only
   source: "Source: JevTells + OpenRouter"
   unknown: unknown
@@ -42,6 +45,7 @@ ui:
   brand: JevTells · Body language
   title: 'AI reads {speaker}'
   waiting: Waiting for the first sentence…
+  target_offscreen: (Target offscreen; no judgment)
   other_speaker: (Another speaker; no judgment)
   other_legend: other speaker
   locked: target locked
