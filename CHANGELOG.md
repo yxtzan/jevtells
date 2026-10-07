@@ -5,6 +5,42 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-07
+
+### Added
+
+- **Burned-in subtitle reading (OCR).** `--subtitle-source auto|ocr|asr|srt` (default `auto`). When `--subtitles off` and a subtitle band is detected, the on-screen subtitles are read with RapidOCR (CPU, Apache-2.0) instead of speech-to-text. The text is far more accurate, and the narration timing follows the on-screen subtitles. For bilingual subtitles, the spoken-language line is kept and the other line is stored as a translation. Speech-to-text still runs for voice features.
+- **Re-identification across cuts.** After a hard cut the target is found again by the colours of their torso and top, compared with references taken at each `--target` anchor. When no one matches clearly, the target counts as off screen. Windows where the target is visible less than half the time are not analysed (`target_offscreen`).
+- **Multi-person shots.**
+  - A person counts only when their face and most of their body are inside the frame.
+  - The portrait video shows the full frame while two or more people are on screen, and zooms in when one person is left. Inside a continuous shot this switch is a 600 ms zoom.
+  - Everyone's face is kept clear of labels and the score card.
+  - The landscape card collapses to a small tag during sentences that are not analysed, and turns into a one-line mini card when a full card would cover a face.
+
+### Changed
+
+- **Cut detection** ignores single-frame colour flashes from video compression.
+- **Narration:**
+  - The first analysed sentence uses no "rose / fell" wording.
+  - No speech-rate numbers.
+  - "Large" movements must match a real large gesture of the same hand.
+  - Chinese quotes are exact subtitle text without spaces.
+- **Gestures:**
+  - Movement is not computed across cuts.
+  - Gestures starting within 0.3 s after a cut are dropped.
+  - A pinch no longer counts as a fist (rule only; one real case remains).
+  - Hands out of view are reported to Jev as "not visible", not as "no gestures".
+  - A new label on the same hand swaps its text in place.
+- **Uncertain intent or emotion** (top probability below 0.40) is shown as「不明显」.
+- **Short pieces:** OCR and SRT cues are merged into windows of at least 2 s. A very short interjection keeps the previous panel on screen instead of flashing.
+- **Status:** shows「主角不在画面」when the target is off screen, separately from「目标丢失」.
+
+### Known issues
+
+- Who is speaking is still given by hand (`--others-speaking`).
+- The clothing-colour re-identification cannot tell apart people dressed alike; it then marks the target as off screen.
+- One real pinch-as-fist case remains on the Tim sample (fist labels are hidden by default).
+
 ## [0.5.0] - 2026-10-05
 
 ### Added

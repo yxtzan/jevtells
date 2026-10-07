@@ -4,7 +4,7 @@
 >
 > 上传一段说话人视频，得到一段标注了手势、意图和 Jev 判定的视频。
 
-**Status: v0.5.0.** Feed in a video, pick the person to analyse, and get back two annotated videos: landscape 16:9 and portrait 3:4.
+**Status: v0.6.0.** Feed in a video, pick the person to analyse, and get back two annotated videos: landscape 16:9 and portrait 3:4.
 
 - **What's on screen:** gesture labels that follow the hands, Jev's scores and trends, intent and emotion, and a one-line narration grounded in the measured data.
 - **Layout adapts to the shot:**
@@ -16,7 +16,7 @@
 | Step | Tool | Runs |
 |---|---|---|
 | Body & hand keypoints, every frame | MediaPipe | locally |
-| Subtitles with word timestamps | faster-whisper | locally |
+| Subtitles: read from the picture when burned in, otherwise transcribed | RapidOCR / faster-whisper | locally |
 | Loudness, pitch, speech rate | librosa | locally |
 | Keypoints → named gestures (raise, press down, open palm …) | rule engine | locally |
 | Confidence / focus / tension, intent, emotion | Jev via OpenRouter | API |
@@ -107,6 +107,7 @@ Results go to `work/<clip_id>/`:
 | `--others-speaking START-END` | Seconds when someone else is talking; repeatable. Those sentences get no scores or narration |
 | `--blur X,Y,W,H` | Blur a rectangle (source pixels) in the finished video, e.g. a watermark; repeatable |
 | `--subtitles on` / `off` | Draw subtitles (default `on`); use `off` if the video already has burned-in subtitles |
+| `--subtitle-source auto` / `ocr` / `asr` / `srt` | Where the subtitle text comes from. `auto` reads burned-in subtitles from the picture when `--subtitles off`, otherwise transcribes the audio |
 | `--debug-layout` | Save one picture per shot showing the speaker area, no-go zones and chosen label positions |
 | `--start`, `--duration` | Analyse only part of the video (seconds) |
 | `--srt FILE` | Use your own subtitles instead of automatic transcription |
@@ -140,7 +141,7 @@ Results go to `work/<clip_id>/`:
 
 ## Limitations
 
-- **Who is speaking:** the tool assumes the person you chose is the one speaking. Mark other speakers with `--others-speaking`.
+- **Who is speaking:** mark other speakers with `--others-speaking`; sentences where the chosen person is off screen are skipped automatically. After a cut the person is found again by the colour of their clothes, so two people dressed alike may not be told apart (the tool then leaves the frame unlabelled).
 - **Scores:** they come from a general-purpose model and are uncalibrated.
 - **Gestures:** the rules were tuned on a small set of clips, so expect some wrong labels on very different footage.
 - **Subtitle timing:** burned-in subtitles follow their own timing, while the analysis follows the audio. The narration can therefore run a second or two ahead of the subtitle on screen.
