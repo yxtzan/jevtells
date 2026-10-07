@@ -13,6 +13,8 @@ def run(arguments,config):
     maps=active_speaker.parse_maps(arguments.speaker_map,list(persons))
     input_path=Path(arguments.input);out=Path(arguments.output).parent if arguments.output else Path('work')/(_clip_id(input_path,arguments.start,arguments.duration)+'_two')
     out.mkdir(parents=True,exist_ok=True)
+    if hasattr(arguments,"auto_start"):
+        write(out,"run_meta.json",{"actual_start":arguments.start,"auto_start":arguments.auto_start})
     def step(name,function,*args,**kwargs):
         print(f'{name}: started',flush=True);tick=time.perf_counter();value=function(*args,**kwargs);times[name]=time.perf_counter()-tick;print(f'{name}: complete {times[name]:.1f}s',flush=True);return value
     force=arguments.force

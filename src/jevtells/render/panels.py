@@ -116,7 +116,7 @@ class Panels:
         else:
             px, py = 0, 0
         offset = px + tag_w + self.p["commentary_gap"]
-        speaker_tag = str(window.get("speaker") or "unknown") if window.get("two_person") else ""
+        speaker_tag = str(window.get("speaker") or "") if window.get("two_person") else ""
         if speaker_tag and self.layout.kind == "h":
             offset += self.fonts.font("sans", self.p["index_size"]+2).getlength(speaker_tag)/self.layout.scale + 2*pad_x + self.p["commentary_gap"]
         fitted = self.fonts.fit(str(line), "serif_black" if self.layout.kind == "v" else "sans_black", self.p["commentary_size"], width - offset - px, 2 if self.layout.kind == "v" else 1, self.g["highlight_padding"])
@@ -182,7 +182,7 @@ class Panels:
             draw.rectangle(self.layout.rect((x, y, width, height)), fill=(*ImageColor.getrgb(self.c["ink"]), round(255 * self.settings["panel_opacity"])))
             draw.rectangle(self.layout.rect((x, y, width, self.p["card_border"])), fill=self.c["lime"])
             pad = self.p["card_padding"]
-            card_title = self.tr["ui"]["card_title"] + (" · " + str(self.windows[index].get("speaker") or "unknown") if self.windows[index].get("two_person") else "")
+            card_title = self.tr["ui"]["card_title"] + (" · " + str(self.windows[index].get("speaker") or "未确定") if self.windows[index].get("two_person") else "")
             self.text(image, card_title, x + pad, y + pad, width - 2 * pad, self.p["card_title_size"], color=self.c["lime"])
             source = "" if self.windows[index].get("two_person") else self.tr["ui"]["card_source"]
             font = self.fonts.font("sans", self.p["card_source_size"])

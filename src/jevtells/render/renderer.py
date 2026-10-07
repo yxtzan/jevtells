@@ -281,10 +281,10 @@ class Composer:
         probability = judgment.get("actions", {}).get(str(event["id"]))
         details.append(self.tr["ui"]["expressive"].format(value=f"{probability:.2f}" if isinstance(probability, (int, float)) else self.tr["ui"]["missing"]))
         badge_text = " · ".join(([str(event["person"])] if event.get("person") else []) + details)
-        badge_fit = self.fonts.fit(badge_text, "sans", self.p["badge_size"], available - 2 * label["badge_padding"][0] - label["badge_indent"], 1)
+        badge_fit = self.fonts.fit(badge_text, "sans", self.p["badge_size"], available - 2 * label["badge_padding"][0] - label["badge_indent"], 2 if event.get("person") else 1)
         bx, by = (self.layout.px(v) for v in label["badge_padding"])
-        badge_width = round(badge_fit.font.getlength(badge_text)) + 2 * bx
-        badge_height = round(badge_fit.size * g["line_height"]) + 2 * by
+        badge_width = round(max(badge_fit.font.getlength(row) for row in badge_fit.lines)) + 2 * bx
+        badge_height = round(len(badge_fit.lines) * badge_fit.size * g["line_height"]) + 2 * by
         indent, gap = self.layout.px(label["badge_indent"]), self.layout.px(label["gap"])
         sprite = Image.new("RGBA", (max(width, badge_width + indent), height + gap + badge_height))
         draw = ImageDraw.Draw(sprite)

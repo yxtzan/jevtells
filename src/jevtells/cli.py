@@ -291,6 +291,9 @@ def _finish_run(
     metadata: dict[str, Any] = {"parameters": vars(arguments), "elapsed_s": time.perf_counter() - started, "stage_times_s": stage_times, "encoding": encoding, "language": transcript.get("language"), "target_anchors": anchors, "duration_s": duration, "occupied_hands": actions_result.get("occupied_hands", {}) if isinstance(actions_result, Mapping) else {}, "api": api_stats}
     if (output / "track_meta.json").exists():
         metadata["tracking"] = json.loads((output / "track_meta.json").read_text(encoding="utf-8"))
+    if hasattr(arguments, "auto_start"):
+        metadata["actual_start"] = arguments.start
+        metadata["auto_start"] = arguments.auto_start
     metadata["models_used"] = {}
     for stage, prefix in (("judge", "jev"), ("narrate", "narrate")):
         identifiers = set()
@@ -340,6 +343,8 @@ def main() -> None:
     clip_id = _clip_id(input_path, arguments.start, arguments.duration)
     output = Path(arguments.output).parent if arguments.output else Path("work") / clip_id
     output.mkdir(parents=True, exist_ok=True)
+    if hasattr(arguments, "auto_start"):
+        (output / "run_meta.json").write_text(json.dumps({"auto_start": arguments.auto_start, "actual_start": arguments.start}, ensure_ascii=False, indent=2))
     targets_changed = _targets_changed(output, anchors)
     intervals = parse_intervals(getattr(arguments, "others_speaking", []))
     blur_rectangles = parse_blurs(getattr(arguments, "blur", []))

@@ -57,5 +57,10 @@ def resolve(arguments,config):
         arguments.persons={name:rebase(anchors,_load_npz(full/f'person_{p}.npz')) for p,(name,anchors) in enumerate(arguments.persons.items())}
     else:
         arguments.target=[f'{n}@{t}' for n,t in rebase(_parse_targets(arguments.target),points)]
-    arguments.start=start;arguments.auto_start={'actual_start':start,'sustained_state_start':candidate,'source_cache':str(full)}
+    arguments.auto_start={'actual_start':start,'sustained_state_start':candidate,'source_cache':str(full),'source_others_speaking':list(arguments.others_speaking),'source_speaker_map':list(arguments.speaker_map)}
+    arguments.others_speaking=[f'{max(0.,a-start):g}-{b-start:g}' for a,b in parse_intervals(arguments.others_speaking) if b>start]
+    if arguments.speaker_map:
+        from .active_speaker import parse_maps
+        arguments.speaker_map=[f'{max(0.,a-start):g}-{b-start:g}={name}' for a,b,name in parse_maps(arguments.speaker_map,list(arguments.persons)) if b>start]
+    arguments.start=start
     return start
