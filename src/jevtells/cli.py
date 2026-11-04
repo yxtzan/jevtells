@@ -49,6 +49,13 @@ def _arguments() -> argparse.Namespace:
     people_parser.add_argument("--config")
     people_parser.add_argument("--force", action="store_true")
 
+    pick_parser = subparsers.add_parser("pick", help="click a numbered person; Enter saves, Esc cancels")
+    pick_parser.add_argument("input")
+    pick_parser.add_argument("--at", type=float, default=0.0)
+    pick_parser.add_argument("-o", "--output")
+    pick_parser.add_argument("--config")
+    pick_parser.add_argument("--force", action="store_true")
+
     run_parser = subparsers.add_parser("run", help="run the JevTells data pipeline")
     run_parser.add_argument("input")
     run_parser.add_argument("-o", "--output")
@@ -204,6 +211,10 @@ def _people_command(arguments: argparse.Namespace) -> None:
         detections = _load_npz(detections_path)
     else:
         detections = _run_pose(clip, output, arguments.force, config)
+    if arguments.command == "pick":
+        from .stages import pick
+        pick.run(clip, output, arguments.at, detections, input_path, config)
+        return
     records = _invoke(people.run, clip, output, at=arguments.at, detections=detections, force=arguments.force, config=config)
     for record in records:
         print(f"{record['number']}: detector_index={record['detector_index']} box={record['box']} t={record['time']:.2f}s")
@@ -276,7 +287,10 @@ def main() -> None:
         from .download import main as download_main
         download_main()
         return
-    if arguments.command == "people":
+    if arguments.command == "pick":
+        from .stages.pick import require_gui
+        require_gui()
+    if arguments.command in {"people", "pick"}:
         _people_command(arguments)
         return
     if arguments.command != "run":
@@ -286,10 +300,16 @@ def main() -> None:
     if not input_path.exists():
         raise FileNotFoundError(input_path)
     config = load_config(arguments.config)
-    anchors = _parse_targets(arguments.target)
     clip_id = _clip_id(input_path, arguments.start, arguments.duration)
     output = Path(arguments.output).parent if arguments.output else Path("work") / clip_id
     output.mkdir(parents=True, exist_ok=True)
+    from .stages.pick import resolve as resolve_pick
+    canonical = Path("work") / _clip_id(input_path, 0.0, None)
+    anchors, picked = resolve_pick(arguments.target, output, canonical, input_path)
+    if picked:
+        if arguments.start != 0:
+            raise ValueError('pick anchors use source time; for a trimmed clip pass explicit --target anchors')
+        print(f"使用 pick 选定的目标：{anchors} ({picked})")
     targets_changed = _targets_changed(output, anchors)
     intervals = parse_intervals(getattr(arguments, "others_speaking", []))
     blur_rectangles = parse_blurs(getattr(arguments, "blur", []))
@@ -357,7 +377,11 @@ def main() -> None:
             if len(first_people) != 1:
                 raise SystemExit("multiple people detected; run `jevtells people INPUT` and pass --target N[@SECONDS]")
     if arguments.until == "people":
-        records = _invoke(people.run, clip, output, at=0.0, detections=detections, force=arguments.force, config=config)
+        if arguments.command == "pick":
+        from .stages import pick
+        pick.run(clip, output, arguments.at, detections, input_path, config)
+        return
+    records = _invoke(people.run, clip, output, at=0.0, detections=detections, force=arguments.force, config=config)
         for record in records:
             print(f"{record['number']}: detector_index={record['detector_index']} box={record['box']} t={record['time']:.2f}s")
         print(f"people={output / 'people_00.0s.png'}")
