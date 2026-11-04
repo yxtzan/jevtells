@@ -45,7 +45,7 @@ def checks(config: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         except (OSError,subprocess.CalledProcessError,subprocess.TimeoutExpired):
             pass
     add('ffmpeg',bool(executable and available),', '.join(available) if available else 'unavailable','Install ffmpeg with libx264 (macOS: brew install ffmpeg).')
-    for name in ('pose','hands'):
+    for name in ('pose','hands','face_detector','face_recognizer'):
         path=asset_path(Path('models')/str(config['models'][name]))
         add('MediaPipe '+name,path.is_file() and path.stat().st_size>0,str(path),'Run jevtells download; set JEVTELLS_HOME if assets live elsewhere.')
     for role,relative in config['render']['fonts'].items():

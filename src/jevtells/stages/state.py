@@ -115,7 +115,10 @@ def run(
 
     destination = out / "states.json"
     if destination.exists() and not force:
-        return json.loads(destination.read_text(encoding="utf-8"))
+        cached = json.loads(destination.read_text(encoding="utf-8"))
+        enabled = bool((config or {}).get('jev_images',{}).get('enabled',False))
+        if all(('frames' in row) == enabled for row in cached.values()):
+            return cached
     if transcript is None:
         transcript_path = out / ("transcript_asr.json" if (out / "transcript_asr.json").exists() else "transcript.json")
         if transcript_path.exists():
@@ -130,5 +133,10 @@ def run(
     for window in windows:
         state = State(scene=scene, speaker=speaker, subtitle={"current": window["subtitle"], "previous": window.get("prev_subtitle", "")}, voice=_voice_text(voice, window, transcript, config), measured_actions=_actions(measured_points, window, actions, config))
         states[window["id"]] = state.model_dump()
+    if (config or {}).get('jev_images',{}).get('enabled',False):
+        from .jev_images import extract
+        frames = extract(out/'clip.mp4', out, windows, measured_points, actions or {}, config['jev_images'])
+        for identifier,row in states.items():
+            row['frames'] = frames[identifier]
     destination.write_text(json.dumps(states, ensure_ascii=False, indent=2), encoding="utf-8")
     return states

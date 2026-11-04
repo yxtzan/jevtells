@@ -148,10 +148,14 @@ def _request_json(
             # No request headers or request body are retained.
             path = audit_dir / f"openrouter_error_{time.time_ns()}.json"
             path.write_text(json.dumps(event, ensure_ascii=False, indent=2), encoding="utf-8")
+        from . import budget
+        budget.record(event)
         if on_response is not None:
             on_response(event)
 
     for attempt in range(max(1, int(attempts))):
+        from . import budget
+        budget.before_request()
         if before_request is not None:
             before_request()
         try:
@@ -204,6 +208,8 @@ def _jev_question(value: Mapping[str, Any]) -> dict[str, Any]:
 
     kind = str(value.get("type", "choice"))
     instructions = value.get("instructions", value.get("question", ""))
+    if kind == "box":
+        return {"type": kind, "instructions": str(instructions)}
     criteria = value.get("criteria")
     options = value.get("options", [])
     if criteria is None:
@@ -225,6 +231,7 @@ def decide(
     questions: Sequence[Mapping[str, Any]] | Mapping[str, Mapping[str, Any]],
     model: str = "typesafe/jev-1.13",
     *,
+    assets: Mapping[str, Any] | None = None,
     timeout: float = 60.0,
     attempts: int = 4,
     api_key: str | None = None,
@@ -246,6 +253,8 @@ def decide(
             if isinstance(item, Mapping) and item.get("id") is not None
         }
     payload = {"model": model, "state": dict(state), "questions": question_record}
+    if assets:
+        payload["assets"] = dict(assets)
     return _result(_request_json(DECISIONS_URL, payload, timeout=timeout, attempts=attempts, api_key=api_key, env_path=env_path, transport=transport, sleep=sleep, audit_dir=audit_dir, on_response=on_response, before_request=before_request))
 
 

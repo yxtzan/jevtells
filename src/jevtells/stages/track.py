@@ -242,6 +242,13 @@ def run(detections: Path | Mapping[str, Any], out: Path, anchors: Sequence[tuple
         edits = detect_hard_cuts(clip, (config or {}).get("shots", {}))
         descriptors = read_appearances(clip, poses, _config(config).visibility_threshold)
         indices, identity_meta = track_appearance(poses, descriptors, anchors or [(1, 0.0)], edits["cuts"], fps, width, height, config or {})
+        if (config or {}).get('face_identity', {}).get('enabled', False):
+            from .face_identity import read_features, anchor_references, refine_single
+            features = read_features(clip, poses, out, config, force)
+            refs = anchor_references(poses, features['embeddings'], anchors or [(1, 0.)], edits['cuts'], fps, width, height, config)
+            indices, face_meta = refine_single(poses, features['embeddings'], refs, indices,
+                anchors or [(1, 0.)], fps, width, height, config, edits['cuts'])
+            identity_meta['face_identity'] = face_meta
     else:
         indices = track_people(poses, anchors, fps, width, height, config)
     target_pose = np.full((len(indices), poses.shape[2], poses.shape[3]), np.nan, dtype=np.float32)

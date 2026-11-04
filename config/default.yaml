@@ -12,6 +12,8 @@ models:
   whisper: small
   pose: pose_landmarker_full.task
   hands: hand_landmarker.task
+  face_detector: face_detection_yunet_2023mar.onnx
+  face_recognizer: face_recognition_sface_2021dec.onnx
 
 jev:
   model: typesafe/jev-1.13
@@ -217,6 +219,7 @@ render:
     compact_card_size: 14
   model_names:
     'typesafe/jev-1.13*': Jev 1.13
+    'typesafe/jev-1.14*': Jev 1.14
     'google/gemini-3.1-flash-lite*': Gemini Flash Lite
     'google/gemini-3.8-flash*': Gemini 3.8 Flash
   fps: 30
@@ -440,3 +443,43 @@ ocr:
   word_colour_ratio: 0.30
   word_text_value: 100
   word_text_saturation: 50
+
+# M8 additions are opt-in; legacy tracking and five-field states stay default.
+jev_images:
+  enabled: false
+  model: typesafe/jev-1.14
+  min_side: 256
+  face_min_side: 320
+  max_side: 1568
+  min_pixels: 78400
+  preferred_side: 640
+  jpeg_quality: 88
+  visibility: 0.5
+  crop_padding: 0.18
+
+target_desc:
+  model: typesafe/jev-1.14
+  presence_probability: 0.80
+  min_iou: 0.25
+  iou_margin: 0.05
+
+face_identity:
+  enabled: false
+  face_score: 0.8
+  face_cosine: 0.363
+  face_margin: 0.10
+  face_min_pixels: 48
+  face_pose_distance: 1.5
+  face_probe_frames: 10
+  face_observed_ratio: 0.5
+
+auto_start:
+  sustained_seconds: 2.0
+
+synthetic_recolor:
+  hue_shift: 60
+  saturation_floor: 160
+
+speaking_images:
+  positive_probability: 0.80
+  negative_probability: 0.20

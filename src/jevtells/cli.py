@@ -49,6 +49,13 @@ def _arguments() -> argparse.Namespace:
     people_parser.add_argument("--config")
     people_parser.add_argument("--force", action="store_true")
 
+    pick_parser = subparsers.add_parser("pick", help="click a numbered person; Enter saves, Esc cancels")
+    pick_parser.add_argument("input")
+    pick_parser.add_argument("--at", type=float, default=0.0)
+    pick_parser.add_argument("-o", "--output")
+    pick_parser.add_argument("--config")
+    pick_parser.add_argument("--force", action="store_true")
+
     run_parser = subparsers.add_parser("run", help="run the JevTells data pipeline")
     run_parser.add_argument("input")
     run_parser.add_argument("-o", "--output")
@@ -57,12 +64,16 @@ def _arguments() -> argparse.Namespace:
     run_parser.add_argument("--lang", choices=("zh", "en"), default="zh")
     run_parser.add_argument("--srt")
     run_parser.add_argument("--subtitle-source", choices=("auto", "ocr", "asr", "srt"), default="auto")
-    run_parser.add_argument("--start", type=float, default=0.0)
+    run_parser.add_argument("--start", default="0", help="SECONDS or auto (opt-in)")
     run_parser.add_argument("--duration", type=float)
     run_parser.add_argument("--force", action="store_true")
     run_parser.add_argument("--until", default="render", choices=_STAGE_ORDER, help="last stage to run (default: render); state also writes debug.mp4")
     run_parser.add_argument("--from", dest="from_stage", choices=_STAGE_ORDER)
     run_parser.add_argument("--target", action="append", default=[], metavar="N@SECONDS", help="target person number at a time anchor; repeat for cuts")
+    run_parser.add_argument("--target-desc", help="experimental description-based target selection")
+    run_parser.add_argument("--target-at", type=float, default=0.0, help="description anchor time within clip")
+    run_parser.add_argument("--face-identity", action="store_true", help="opt-in YuNet/SFace identity before clothing")
+    run_parser.add_argument("--jev-images", action="store_true", help="experimental Jev 1.14 target images")
     run_parser.add_argument("--config")
     run_parser.add_argument("--others-speaking", action="append", default=[], metavar="START-END")
     run_parser.add_argument("--blur", action="append", default=[], metavar="X,Y,W,H")
@@ -192,6 +203,9 @@ def _video_duration(path: Path) -> float:
 
 
 def _people_command(arguments: argparse.Namespace) -> None:
+    for name, default in {'target_desc': None, 'target_at': 0., 'face_identity': False, 'jev_images': False}.items():
+        if not hasattr(arguments, name):
+            setattr(arguments, name, default)
     input_path = Path(arguments.input)
     if not input_path.exists():
         raise FileNotFoundError(input_path)
@@ -204,6 +218,10 @@ def _people_command(arguments: argparse.Namespace) -> None:
         detections = _load_npz(detections_path)
     else:
         detections = _run_pose(clip, output, arguments.force, config)
+    if arguments.command == "pick":
+        from .stages import pick
+        pick.run(clip, output, arguments.at, detections, input_path, config)
+        return
     records = _invoke(people.run, clip, output, at=arguments.at, detections=detections, force=arguments.force, config=config)
     for record in records:
         print(f"{record['number']}: detector_index={record['detector_index']} box={record['box']} t={record['time']:.2f}s")
@@ -246,6 +264,8 @@ def _finish_run(
     costs = [float(item["cost"]) for item in api_stats.values() if isinstance(item, Mapping) and item.get("cost") is not None]
     api_stats["total_cost"] = sum(costs) if costs else None
     metadata: dict[str, Any] = {"parameters": vars(arguments), "elapsed_s": time.perf_counter() - started, "stage_times_s": stage_times, "encoding": encoding, "language": transcript.get("language"), "target_anchors": anchors, "duration_s": duration, "occupied_hands": actions_result.get("occupied_hands", {}) if isinstance(actions_result, Mapping) else {}, "api": api_stats}
+    if hasattr(arguments, "auto_start"):
+        metadata["auto_start"] = arguments.auto_start
     if (output / "track_meta.json").exists():
         metadata["tracking"] = json.loads((output / "track_meta.json").read_text(encoding="utf-8"))
     metadata["models_used"] = {}
@@ -276,29 +296,65 @@ def main() -> None:
         from .download import main as download_main
         download_main()
         return
-    if arguments.command == "people":
+    if arguments.command == "pick":
+        from .stages.pick import require_gui
+        require_gui()
+    if arguments.command in {"people", "pick"}:
         _people_command(arguments)
         return
     if arguments.command != "run":
         raise SystemExit("usage: jevtells run INPUT --speaker NAME [--until state]")
 
+    for name, default in {'target_desc': None, 'target_at': 0., 'face_identity': False, 'jev_images': False}.items():
+        if not hasattr(arguments, name):
+            setattr(arguments, name, default)
     input_path = Path(arguments.input)
     if not input_path.exists():
         raise FileNotFoundError(input_path)
     config = load_config(arguments.config)
-    anchors = _parse_targets(arguments.target)
+    if arguments.target and arguments.target_desc:
+        raise ValueError('--target and --target-desc are mutually exclusive')
+    if arguments.face_identity:
+        config['face_identity']['enabled'] = True
+    if arguments.jev_images:
+        config['jev_images']['enabled'] = True
+    if str(arguments.start) == 'auto':
+        from .stages.auto_start import resolve
+        resolve(arguments, config)
+    else:
+        import math
+        arguments.start = float(arguments.start)
+        if not math.isfinite(arguments.start) or arguments.start < 0:
+            raise ValueError('--start requires nonnegative seconds or auto')
     clip_id = _clip_id(input_path, arguments.start, arguments.duration)
     output = Path(arguments.output).parent if arguments.output else Path("work") / clip_id
     output.mkdir(parents=True, exist_ok=True)
+    from .stages.pick import resolve as resolve_pick
+    canonical = Path("work") / _clip_id(input_path, 0.0, None)
+    if arguments.target_desc:
+        anchors, picked = _parse_targets([]), None
+    else:
+        anchors, picked = resolve_pick(arguments.target, output, canonical, input_path)
+    if picked and not arguments.target_desc:
+        if arguments.start != 0:
+            from .stages.auto_start import rebase, source_track
+            data, full_points, _ = source_track(arguments, config, anchors, picked.parent)
+            anchors = rebase(anchors, full_points, data, arguments.start, arguments.duration)
+        print(f"使用 pick 选定的目标：{anchors} ({picked})")
     targets_changed = _targets_changed(output, anchors)
     intervals = parse_intervals(getattr(arguments, "others_speaking", []))
     blur_rectangles = parse_blurs(getattr(arguments, "blur", []))
+    saved_config = json.loads((output/'track_meta.json').read_text()).get('config', {}) if (output/'track_meta.json').exists() else {}
+    identity_changed = bool(saved_config.get('face_identity',{}).get('enabled',False)) != bool(config['face_identity']['enabled'])
+    saved_states = json.loads((output/'states.json').read_text()) if (output/'states.json').exists() else {}
+    images_changed = bool(any('frames' in row for row in saved_states.values())) != bool(config['jev_images']['enabled'])
+    judgments_changed = False
     others_changed = False
     subtitle_changed = False
 
     def force_stage(stage: str) -> bool:
         rerun_from = arguments.from_stage
-        return bool(arguments.force or (rerun_from and _STAGE_ORDER.index(stage) >= _STAGE_ORDER.index(rerun_from)) or (targets_changed and stage in _TARGET_STAGES) or (others_changed and stage in {"actions", "state", "debug", "judge", "narrate", "render"}) or (subtitle_changed and stage in {"segment", "actions", "scene", "state", "debug", "judge", "narrate", "render"}))
+        return bool(arguments.force or (judgments_changed and stage in {"narrate", "render"}) or (identity_changed and stage in _TARGET_STAGES) or (images_changed and stage in {"state", "judge", "narrate", "render"}) or (rerun_from and _STAGE_ORDER.index(stage) >= _STAGE_ORDER.index(rerun_from)) or (targets_changed and stage in _TARGET_STAGES) or (others_changed and stage in {"actions", "state", "debug", "judge", "narrate", "render"}) or (subtitle_changed and stage in {"segment", "actions", "scene", "state", "debug", "judge", "narrate", "render"}))
 
     started = time.perf_counter()
     stage_times: dict[str, float] = {}
@@ -314,6 +370,8 @@ def main() -> None:
     if arguments.from_stage == "render":
         if arguments.until != "render":
             raise ValueError("--from render requires --until render")
+        if identity_changed or images_changed:
+            raise ValueError("Feature switches changed; rerun the analysis before rendering")
         if targets_changed:
             raise ValueError("target anchors changed; rerun from track before rendering")
         def read_cache(name: str) -> Any:
@@ -344,7 +402,11 @@ def main() -> None:
         detections = _load_npz(output / "keypoints.npz")
     if arguments.until == "pose":
         return
-    if not arguments.target:
+    if arguments.target_desc:
+        from .stages.target_desc import select
+        anchors = [select(clip, detections, arguments.target_desc, arguments.target_at, output/'target_desc', config)]
+        targets_changed = _targets_changed(output, anchors)
+    if not arguments.target and not picked and not arguments.target_desc:
         from .stages.track import sorted_person_indices
         poses_all = detections.get("poses_all", detections.get("poses", []))
         if getattr(poses_all, "ndim", 0) == 4 and len(poses_all):
@@ -448,7 +510,9 @@ def main() -> None:
         finish()
         return
     stage_start = time.perf_counter()
+    previous_judgments = json.loads((output/'judgments.json').read_text()) if (output/'judgments.json').exists() else None
     judgments = _invoke(judge.run, states, output, force_stage("judge"), config=config)
+    judgments_changed = previous_judgments != {key:value for key,value in judgments.items() if key!='_meta'}
     stage_times["judge"] = time.perf_counter() - stage_start
     if arguments.until == "judge":
         finish()
