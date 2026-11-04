@@ -183,7 +183,11 @@ def run(states: Mapping[str, Any] | None, out: Path, force: bool = False, config
     skipped = skip_reasons(json.loads(windows_path.read_text(encoding="utf-8"))) if windows_path.exists() else {}
     base = load_questions()
     model = str((config or {}).get("jev", {}).get("model", "typesafe/jev-1.13"))
+    if (config or {}).get('jev_images',{}).get('enabled',False):
+        model = str(config['jev_images']['model'])
     active_client = client or OpenRouterClient()
+    if isinstance(active_client, OpenRouterClient) and hasattr(active_client, 'audit_dir'):
+        active_client.audit_dir = out/'raw'
     raw_dir = out / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
     judgments: dict[str, Any] = {}
@@ -196,7 +200,15 @@ def run(states: Mapping[str, Any] | None, out: Path, force: bool = False, config
         questions = _actions_questions(state, base)
         aggregate["calls"] += 1
         try:
-            result = active_client.decide(state, questions, model)
+            if 'frames' in state:
+                from .jev_images import bind
+                image_state, assets = bind(state)
+                if not assets:
+                    raise ValueError('Image-enabled judgment has no target frames')
+                questions = {key:{**question,'instructions':question['instructions']+' Also consider expressions and posture in `frames`.'} for key,question in questions.items()}
+                result = active_client.decide(image_state, questions, model, assets=assets)
+            else:
+                result = active_client.decide(state, questions, model)
             raw = result.get("raw", result.get("response", result)) if isinstance(result, Mapping) else result
             if not isinstance(raw, Mapping):
                 raise ValueError("Jev response is not an object")
