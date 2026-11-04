@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import functools
+import json
+from pathlib import Path
 from typing import Any, Callable
 
 
@@ -21,7 +23,18 @@ def main() -> None:
         module.run = progress(module.run, "scene" if name == "scene_stage" else name)
     cli._run_actions = progress(cli._run_actions, "actions")
     render.run = progress(render.run, "render")
+    parse = cli._arguments
+    parsed = None
+    def arguments() -> Any:
+        nonlocal parsed
+        parsed = parse()
+        return parsed
+    cli._arguments = arguments
     cli.main()
+    if parsed is not None and parsed.command == 'run' and parsed.output:
+        (Path(parsed.output).parent/'ui_stage_meta.json').write_text(json.dumps({
+            'actual_start': parsed.start, 'target': parsed.target,
+            'others_speaking': parsed.others_speaking}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

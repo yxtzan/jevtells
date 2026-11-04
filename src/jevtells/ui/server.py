@@ -14,6 +14,7 @@ import webbrowser
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
+from urllib.parse import unquote
 
 import cv2
 from dotenv import dotenv_values
@@ -96,6 +97,8 @@ def create_app(home: Path | None = None) -> Flask:
 
     @app.after_request
     def headers(response: Any) -> Any:
+        if response.is_json:
+            response.set_data(redact(response.get_data(as_text=True), root))
         response.headers['Content-Security-Policy'] = "default-src 'self'; img-src 'self' blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'"
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['Cache-Control'] = 'no-store'
@@ -142,14 +145,15 @@ def create_app(home: Path | None = None) -> Flask:
         with jobs.lock:
             if jobs.busy():
                 raise RuntimeError('busy')
-            suffix = Path(request.headers.get('X-Filename', '')).suffix.lower()
+            filename = unquote(request.headers.get('X-Filename', ''))
+            suffix = Path(filename).suffix.lower()
             if suffix not in VIDEOS:
                 abort(415)
             if request.content_length is not None and request.content_length > maximum:
                 abort(413)
             # Stream a raw body. The extension and Content-Length are checked before
             # writing; the byte counter also protects chunked/unknown-length uploads.
-            stem = secure_filename(Path(request.headers.get('X-Filename', '')).stem)[:64] or 'video'
+            stem = secure_filename(Path(filename).stem)[:64] or 'video'
             destination = safe_path(root, f'samples/{stem}_{uuid.uuid4().hex[:10]}{suffix}', 'samples')
             try:
                 with destination.open('xb') as handle:
@@ -225,7 +229,6 @@ def create_app(home: Path | None = None) -> Flask:
         with jobs.lock:
             if jobs.busy():
                 raise RuntimeError('busy')
-            previous = read_json(output/'ui_params.json', {})
             # Only a successful full run is eligible for a render-only repeat.
             prior = read_json(output/'ui_complete_params.json', {})
             render_only = bool(mode == 'run' and prior and all(p.get(k) == prior.get(k) for k in set(p)|set(prior) if k not in RENDER_FIELDS)
@@ -275,7 +278,7 @@ def create_app(home: Path | None = None) -> Flask:
         rows = read_json(output/'windows.json', [])
         info = media_info(output/'clip.mp4') if (output/'clip.mp4').exists() else {'duration': 0}
         return jsonify(windows=rows, shots=read_json(output/'shots.json', []), duration=info['duration'],
-                       actual_start=meta.get('parameters', {}).get('start', 0),
+                       actual_start=read_json(output/'ui_stage_meta.json', {}).get('actual_start', meta.get('parameters', {}).get('start', 0)),
                        media=str((output/'clip.mp4').relative_to(root)), meta={'api': meta.get('api', {})})
 
     @app.post('/api/coordinates')
@@ -337,7 +340,9 @@ def create_app(home: Path | None = None) -> Flask:
     @app.get('/api/history')
     def history() -> Any:
         rows = []
-        for path in sorted((root/'work').rglob('output_h.mp4'), key=lambda p: p.stat().st_mtime, reverse=True):
+        paths = {p.parent for name in ('output_h.mp4', 'output_v.mp4') for p in (root/'work').rglob(name)}
+        for parent in sorted(paths, key=lambda p: p.stat().st_mtime, reverse=True):
+            path = parent / ('output_h.mp4' if (parent/'output_h.mp4').is_file() else 'output_v.mp4')
             if not path.resolve().is_relative_to(root/'work') or path.is_symlink():
                 continue
             parent = path.parent
@@ -346,7 +351,7 @@ def create_app(home: Path | None = None) -> Flask:
             except (ValueError, KeyError, TypeError):
                 p = None
             rows.append({'output': str(parent.relative_to(root)), 'params': p,
-                         'h': str(path.relative_to(root)), 'v': str((parent/'output_v.mp4').relative_to(root)) if (parent/'output_v.mp4').is_file() else None})
+                         'h': str((parent/'output_h.mp4').relative_to(root)) if (parent/'output_h.mp4').is_file() else None, 'v': str((parent/'output_v.mp4').relative_to(root)) if (parent/'output_v.mp4').is_file() else None})
         return jsonify(rows)
 
     @app.post('/api/reveal')

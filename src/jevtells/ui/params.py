@@ -6,6 +6,7 @@ In auto-start mode they are source relative, as required by --start auto.
 from __future__ import annotations
 
 import math
+import json
 from pathlib import Path
 from typing import Any
 
@@ -106,6 +107,13 @@ def cli_args(params: dict[str, Any], root: Path, mode: str = "run", render_only:
     if mode not in {"run", "prepare"}:
         raise ValueError("invalid_mode")
     args = ["run", str(source), "-o", str(output_path(p, root) / "output.mp4")]
+    if render_only and p['start'] == 'auto':
+        # Bypass auto-start's source tracking/description selection on a visual
+        # rerender, using the exact resolved CLI parameters of the cached run.
+        meta = json.loads((output_path(p, root)/'run_meta.json').read_text())['parameters']
+        p = {**p, 'start': meta['start'], 'target_desc': None,
+             'target': [[int(v.split('@')[0]), float(v.split('@')[1])] for v in meta['target']],
+             'others_speaking': [[float(t) for t in v.split('-')] for v in meta['others_speaking']]}
     for key in ("speaker", "start", "lang", "title", "subtitles", "subtitle_source", "layout", "reframe"):
         args += ["--"+key.replace("_", "-"), str(p[key])]
     if p["duration"] is not None:
