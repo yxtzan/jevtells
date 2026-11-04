@@ -1,14 +1,183 @@
 <!doctype html>
-<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>JevTells</title><link rel="stylesheet" href="/static/style.css"><script src="/static/app.js" defer></script></head>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>JevTells</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/app.js" defer></script>
+</head>
 <body>
-<aside><a class="brand" href="/">Jev<span>Tells</span><small data-i18n="brandSub"></small></a><div class="rail-label" data-i18n="workspace"></div><nav id="steps"></nav><div class="rail-bottom"><button id="historyNav" data-i18n="history"></button><button id="settingsNav" data-i18n="settings"></button><div class="local"><i></i><span data-i18n="localOnly"></span></div></div></aside>
-<main><header><span id="breadcrumb"></span><div><span class="pill" data-i18n="offline"></span><button id="language">EN</button></div></header><div id="blockers" hidden></div><div id="notice" role="status" hidden></div>
-<section class="page" id="page1"><div class="eyebrow" data-i18n="step1"></div><h1 data-i18n="sourceTitle"></h1><p class="intro" data-i18n="sourceIntro"></p><div class="source-grid"><div><label class="drop" id="drop"><span class="upload-icon">↥</span><strong data-i18n="dropTitle"></strong><span data-i18n="dropHint"></span><input id="upload" type="file" accept="video/*" hidden><span class="button" data-i18n="browse"></span></label><div class="or" data-i18n="orExisting"></div><label class="field"><span data-i18n="samples"></span><select id="samples"><option value=""></option></select></label><div id="mediaMeta" class="meta"></div></div><div class="preview-card"><video id="sourceVideo" controls playsinline></video><div class="preview-caption"><span data-i18n="sourcePreview"></span><span>01 / 05</span></div></div></div><div class="card range-card"><div><h3 data-i18n="analysisRange"></h3><p data-i18n="fullDefault"></p></div><label class="check"><input type="checkbox" id="autoStart"><span data-i18n="autoStart"></span></label><div class="range-fields"><label><span data-i18n="start"></span><input type="range" id="rangeStart" min="0" max="1" step="0.0333333" value="0"><output id="startValue">0.00s</output></label><label><span data-i18n="end"></span><input type="range" id="rangeEnd" min="0" max="1" step="0.0333333" value="1"><output id="endValue">—</output></label></div></div></section>
-<section class="page" id="page2" hidden><div class="eyebrow" data-i18n="step2"></div><h1 data-i18n="personTitle"></h1><p class="intro" data-i18n="personIntro"></p><div class="edit-grid"><div><div class="frame" id="personFrame"><img id="personImage" alt=""><svg id="personBoxes" viewBox="0 0 1280 720"></svg></div><div class="scrubber"><input type="range" id="personTime" min="0" max="1" step="0.0333333" value="0"><output id="personTimeValue">0.00s</output></div><button id="detect" class="secondary" data-i18n="detect"></button></div><div class="card"><label class="field"><span data-i18n="speaker"></span><input id="speaker" placeholder="Tim"></label><h3 data-i18n="anchors"></h3><p data-i18n="anchorsHint"></p><div id="anchors"></div><label class="check"><input type="checkbox" id="faceIdentity" checked><span data-i18n="faceIdentity"></span></label><details><summary data-i18n="experimental"></summary><label class="field"><span data-i18n="description"></span><input id="targetDesc"></label><p data-i18n="descriptionHint"></p></details></div></div></section>
-<section class="page" id="page3" hidden><div class="eyebrow" data-i18n="step3"></div><h1 data-i18n="lookTitle"></h1><p class="intro" data-i18n="lookIntro"></p><div class="edit-grid"><div><div class="frame" id="blurFrame"><img id="blurImage" alt=""><div id="blurBoxes"></div></div><div class="scrubber"><input type="range" id="blurTime" min="0" max="1" step="0.0333333" value="0"><output id="blurTimeValue">0.00s</output></div><div id="blurList" class="chips"></div></div><div class="card"><label class="field"><span data-i18n="title"></span><input id="title"></label><label class="check"><input type="checkbox" id="burned"><span data-i18n="burned"></span></label><p data-i18n="burnedHint"></p><div class="frame subtitle-frame"><img id="subtitleImage" alt=""><div id="subtitleBand"></div></div><p id="subtitleStatus"></p><label class="field"><span data-i18n="subtitleSource"></span><select id="subtitleSource"><option value="auto" data-i18n="automatic"></option><option value="ocr" data-i18n="ocr"></option><option value="asr" data-i18n="asr"></option></select></label></div></div></section>
-<section class="page" id="page4" hidden><div class="eyebrow" data-i18n="step4"></div><h1 data-i18n="talkTitle"></h1><p class="intro" data-i18n="talkIntro"></p><div class="talk-top"><video id="timelineVideo" controls playsinline></video><div class="card"><span class="pill lime" data-i18n="localProcessing"></span><h2 data-i18n="prepareTitle"></h2><p data-i18n="prepareHint"></p><button id="prepare" class="primary" data-i18n="prepare"></button><div class="legend"><span class="dot lime-bg"></span><span data-i18n="targetTalk"></span><span class="dot other-bg"></span><span data-i18n="otherTalk"></span><span class="hatch-key"></span><span data-i18n="absent"></span></div></div></div><div class="card timeline-card"><div class="timeline-heading"><h3 data-i18n="timeline"></h3><output id="timelineTime">0.00s</output></div><div class="timeline-scroll"><div id="timeline"><div id="ticks"></div><div id="thumbs"></div><div id="absence"></div><div id="shotLines"></div><div id="cues"></div><div id="others"></div><div id="playhead"></div></div></div><p data-i18n="timelineHint"></p><div id="intervalList" class="chips"></div></div></section>
-<section class="page" id="page5" hidden><div class="eyebrow" data-i18n="step5"></div><h1 data-i18n="generateTitle"></h1><p class="intro" data-i18n="generateIntro"></p><div class="generate-grid"><div class="card"><h3 data-i18n="summary"></h3><dl id="summary"></dl><details><summary data-i18n="equivalent"></summary><pre id="command"></pre><button id="copy" data-i18n="copy"></button></details></div><div class="card generate-cta"><span class="big-mark">↗</span><h2 data-i18n="ready"></h2><p data-i18n="cacheHint"></p><button id="generate" class="primary" data-i18n="generate"></button><span class="small" data-i18n="costHint"></span></div></div><div id="results" hidden><div class="results-heading"><h2 data-i18n="finished"></h2><button id="reveal" data-i18n="reveal"></button></div><div class="output-grid"><div><video id="outputH" controls></video><a id="downloadH" class="button" data-i18n="downloadH"></a></div><div><video id="outputV" controls></video><a id="downloadV" class="button" data-i18n="downloadV"></a></div></div></div></section>
-<section class="page" id="pageSettings" hidden><div class="eyebrow" data-i18n="preferences"></div><h1 data-i18n="settings"></h1><p class="intro" data-i18n="settingsIntro"></p><div class="generate-grid"><div class="card"><h3 data-i18n="doctor"></h3><div id="checks"></div></div><div class="card"><label class="field"><span data-i18n="key"></span><span id="keyStatus" class="pill"></span><input id="key" type="password" autocomplete="new-password" spellcheck="false"></label><p data-i18n="keyHint"></p><label class="field"><span data-i18n="defaultLanguage"></span><select id="defaultLanguage"><option value="zh">中文</option><option value="en">English</option></select></label><label class="field"><span data-i18n="outputDir"></span><input id="outputDir" value="work"></label><button id="saveSettings" class="primary" data-i18n="save"></button></div></div></section>
-<section class="page" id="pageHistory" hidden><div class="eyebrow" data-i18n="library"></div><h1 data-i18n="history"></h1><p class="intro" data-i18n="historyIntro"></p><div id="historyList"></div></section>
-<div id="jobPanel" class="card" hidden><div class="job-heading"><h3 id="jobStatus"></h3><span id="jobCost"></span><button id="cancel" data-i18n="cancel"></button></div><progress id="progress" max="100" value="0"></progress><div id="stageList"></div><details><summary data-i18n="logs"></summary><pre id="logs"></pre></details></div>
-<footer id="wizardFooter"><span id="footerHint"></span><div><button id="back" data-i18n="back"></button><button id="next" class="primary" data-i18n="next"></button></div></footer><div class="disclaimer" data-i18n="disclaimer"></div></main></body></html>
+<header class="top">
+  <a class="brand" href="/"><i></i>JevTells</a>
+  <nav id="steps" class="stepper" aria-label="steps"></nav>
+  <div class="top-actions">
+    <button id="blockers" class="warn-pill" type="button" hidden></button>
+    <button id="language" class="icon-btn text" type="button">EN</button>
+    <button id="historyNav" class="icon-btn" type="button" data-i18n-title="history"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg></button>
+    <button id="settingsNav" class="icon-btn" type="button" data-i18n-title="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button>
+    <span id="generateWrap" class="gen-wrap"><button id="generate" class="primary" type="button"><span id="generateLabel"></span><b>→</b></button></span>
+  </div>
+</header>
+
+<main class="bench">
+  <section id="stage" class="card stage">
+    <div class="stage-head">
+      <div><h1 id="stageTitle"></h1><p id="stageHint"></p></div>
+      <button id="nextStep" class="ghost" type="button" hidden></button>
+    </div>
+
+    <div id="viewPicker" class="view picker">
+      <label class="drop" id="drop">
+        <input id="upload" type="file" accept="video/*" hidden>
+        <span class="drop-icon" aria-hidden="true">↥</span>
+        <strong data-i18n="dropTitle"></strong>
+        <span data-i18n="dropHint"></span>
+        <span class="button" data-i18n="browse"></span>
+      </label>
+      <div class="library">
+        <div class="library-head"><span data-i18n="samples"></span><code>samples/</code></div>
+        <div id="sampleList" class="sample-grid"></div>
+      </div>
+    </div>
+
+    <div id="viewEdit" class="view edit" hidden>
+      <div class="canvas-wrap">
+        <div id="frame" class="frame">
+          <img id="stageImage" alt="">
+          <video id="stageVideo" playsinline preload="metadata" muted></video>
+          <div id="subtitleBand" hidden><span data-i18n="subtitleBand"></span></div>
+          <div id="blurBoxes"></div>
+          <div id="personBoxes"></div>
+          <div id="dragBox" class="blur-box draft" hidden></div>
+          <div id="frameNote" hidden></div>
+        </div>
+      </div>
+      <div class="player">
+        <button id="play" class="icon-btn" type="button" data-i18n-title="play"><svg viewBox="0 0 24 24" aria-hidden="true"><path id="playIcon" d="M8 5.5v13l10-6.5z"/></svg></button>
+        <output id="clock">0:00.0</output>
+        <input id="scrub" type="range" min="0" max="1" step="0.0333333" value="0">
+        <output id="clockEnd">0:00.0</output>
+      </div>
+    </div>
+
+    <div id="viewSummary" class="view summary" hidden>
+      <div class="summary-grid">
+        <dl id="summary"></dl>
+        <div class="summary-side">
+          <div class="cta">
+            <span id="ctaEstimate" class="estimate-big"></span>
+            <button id="generateBig" class="primary big" type="button"><span data-i18n="generate"></span><b>→</b></button>
+            <p data-i18n="cacheHint"></p>
+          </div>
+          <details class="command"><summary data-i18n="equivalent"></summary><pre id="command"></pre><button id="copy" type="button" data-i18n="copy"></button></details>
+        </div>
+      </div>
+    </div>
+
+    <div id="viewJob" class="view job" hidden>
+      <div class="job-top">
+        <div><span class="k" data-i18n="currentStage"></span><strong id="jobStage"></strong></div>
+        <div><span class="k" data-i18n="elapsed"></span><strong id="jobElapsed">0:00</strong></div>
+        <div><span class="k" data-i18n="cost"></span><strong id="jobCost"></strong></div>
+        <button id="cancel" type="button" data-i18n="cancel"></button>
+      </div>
+      <progress id="progress" max="100" value="0"></progress>
+      <ol id="stageList"></ol>
+      <details class="logs" id="logsBox"><summary data-i18n="logs"></summary><pre id="logs"></pre></details>
+      <div class="job-preview" aria-hidden="true"><div class="ghost-h"><span data-i18n="landscape"></span></div><div class="ghost-v"><span data-i18n="portrait"></span></div></div>
+    </div>
+
+    <div id="viewDone" class="view done" hidden>
+      <div class="outputs">
+        <figure id="figureH"><video id="outputH" controls preload="metadata"></video><figcaption data-i18n="landscape"></figcaption></figure>
+        <figure id="figureV"><video id="outputV" controls preload="metadata"></video><figcaption data-i18n="portrait"></figcaption></figure>
+      </div>
+      <div class="done-actions">
+        <a id="downloadH" class="button primary" data-i18n="downloadH"></a>
+        <a id="downloadV" class="button primary" data-i18n="downloadV"></a>
+        <button id="reveal" type="button" data-i18n="reveal"></button>
+        <span id="doneCost" class="small"></span>
+        <button id="backToEdit" class="ghost" type="button" data-i18n="backToEdit"></button>
+      </div>
+      <p class="disclaimer" data-i18n="disclaimer"></p>
+    </div>
+  </section>
+
+  <aside id="inspector" class="card inspector">
+    <section id="secSubject">
+      <label class="field"><span data-i18n="speaker"></span><input id="speaker" autocomplete="off" data-i18n-placeholder="speakerPlaceholder"></label>
+      <div class="k" data-i18n="anchors"></div>
+      <div id="anchors" class="chips"></div>
+      <label class="field"><span data-i18n="title"></span><input id="title" autocomplete="off"></label>
+    </section>
+    <section id="secOptions">
+      <div class="k" data-i18n="options"></div>
+      <label class="toggle"><span><span data-i18n="burned"></span><small id="subtitleStatus"></small></span><input id="burned" type="checkbox" class="switch"></label>
+      <label class="toggle"><span data-i18n="faceIdentity"></span><input id="faceIdentity" type="checkbox" class="switch" checked></label>
+      <label class="toggle"><span data-i18n="autoStart"></span><input id="autoStart" type="checkbox" class="switch"></label>
+    </section>
+    <section id="secBlur">
+      <div class="k" data-i18n="blur"></div>
+      <div id="blurList" class="chips"></div>
+    </section>
+    <section id="secRange">
+      <div class="k"><span data-i18n="analysisRange"></span><span id="rangeLabel" class="k-right"></span></div>
+      <label class="range-row"><span data-i18n="start"></span><input type="range" id="rangeStart" min="0" max="1" step="0.0333333" value="0"><output id="startValue">0.00s</output></label>
+      <label class="range-row"><span data-i18n="end"></span><input type="range" id="rangeEnd" min="0" max="1" step="0.0333333" value="1"><output id="endValue">—</output></label>
+    </section>
+    <section id="secEstimate">
+      <div class="estimate"><span id="estimate"></span><small id="estimateBasis"></small></div>
+    </section>
+    <details id="advanced">
+      <summary data-i18n="advanced"></summary>
+      <label class="field"><span data-i18n="description"></span><input id="targetDesc" autocomplete="off"></label>
+      <p class="hint" data-i18n="descriptionHint"></p>
+      <label class="field"><span data-i18n="subtitleSource"></span><select id="subtitleSource"><option value="auto" data-i18n="automatic"></option><option value="ocr" data-i18n="ocr"></option><option value="asr" data-i18n="asr"></option></select></label>
+      <label class="field"><span data-i18n="languageLabel"></span><select id="narrationLang"><option value="zh">中文</option><option value="en">English</option></select></label>
+      <label class="field"><span data-i18n="layoutLabel"></span><select id="layout"><option value="both" data-i18n="layoutBoth"></option><option value="h" data-i18n="layoutH"></option><option value="v" data-i18n="layoutV"></option></select></label>
+    </details>
+    <p class="disclaimer" data-i18n="disclaimer"></p>
+  </aside>
+
+  <section id="timelineCard" class="card timeline-card">
+    <div class="bg-progress"><i id="bgBar"></i></div>
+    <div class="tl-head">
+      <b data-i18n="timeline"></b>
+      <span id="bgStatus"></span>
+      <button id="bgAction" class="link" type="button" hidden></button>
+      <div id="intervalList" class="chips inline"></div>
+      <div class="legend"><span><i class="lime-key"></i><em id="legendTarget"></em></span><span><i class="other-key"></i><em data-i18n="otherTalk"></em></span><span><i class="hatch-key"></i><em data-i18n="absent"></em></span><span data-i18n="legendHint"></span></div>
+    </div>
+    <div id="timeline" class="tl">
+      <div id="ticks"></div>
+      <div id="thumbs" class="strip"></div>
+      <div id="absence"></div>
+      <div id="shotLines"></div>
+      <div id="anchorMarks"></div>
+      <div id="cues" class="cues"><div id="others"></div><span id="cuePlaceholder"></span></div>
+      <div id="brush" hidden></div>
+      <div id="playhead"><i></i></div>
+    </div>
+  </section>
+</main>
+
+<div id="scrim" hidden></div>
+<aside id="drawerHistory" class="drawer" hidden aria-labelledby="historyHeading">
+  <div class="drawer-head"><h2 id="historyHeading" data-i18n="history"></h2><button class="icon-btn close" type="button" data-close>✕</button></div>
+  <p class="hint" data-i18n="historyIntro"></p>
+  <div id="historyList"></div>
+</aside>
+<aside id="drawerSettings" class="drawer" hidden aria-labelledby="settingsHeading">
+  <div class="drawer-head"><h2 id="settingsHeading" data-i18n="settings"></h2><button class="icon-btn close" type="button" data-close>✕</button></div>
+  <div class="k" data-i18n="doctor"></div>
+  <div id="checks"></div>
+  <label class="field"><span><span data-i18n="key"></span> <span id="keyStatus" class="pill"></span></span><input id="key" type="password" autocomplete="new-password" spellcheck="false"></label>
+  <p class="hint" data-i18n="keyHint"></p>
+  <label class="field"><span data-i18n="defaultLanguage"></span><select id="defaultLanguage"><option value="zh">中文</option><option value="en">English</option></select></label>
+  <label class="field"><span data-i18n="outputDir"></span><input id="outputDir" value="work"></label>
+  <button id="saveSettings" class="primary" type="button" data-i18n="save"></button>
+</aside>
+<div id="notice" role="status" hidden></div>
+</body>
+</html>
