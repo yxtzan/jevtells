@@ -41,6 +41,8 @@ def _arguments() -> argparse.Namespace:
     doctor_parser=subparsers.add_parser("doctor",help="check Python, ffmpeg, models, fonts and key without writing files")
     doctor_parser.add_argument("--config")
     subparsers.add_parser("download",help="download MediaPipe models and OFL fonts to JEVTELLS_HOME or current directory")
+    ui_parser = subparsers.add_parser("ui", help="open the local browser wizard")
+    ui_parser.add_argument("--port", type=int, default=7860)
 
     people_parser = subparsers.add_parser("people", help="number detected people in a representative frame")
     people_parser.add_argument("input")
@@ -289,6 +291,10 @@ def _finish_run(
 
 def main() -> None:
     arguments = _arguments()
+    if arguments.command == "ui":
+        from .ui.server import serve
+        serve(arguments.port)
+        return
     if arguments.command=="doctor":
         from .doctor import run as doctor_run
         raise SystemExit(doctor_run(load_config(arguments.config)))
