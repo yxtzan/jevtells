@@ -5,6 +5,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-11-05
+
+### Changed
+
+- **`jevtells ui` redesigned as a single light workbench.** The five dark wizard pages are replaced by one screen:
+  - The video, the settings and the speaker timeline are visible at the same time.
+  - The step bar at the top moves focus between tools instead of turning pages.
+  - History and settings open as side drawers.
+- **Detection and preparation run in the background.** Person detection starts as soon as a video is chosen. Subtitle and shot preparation starts once the subject has been picked. If you click Create before preparation finishes, the job waits for it and then starts automatically.
+- **Fewer clicks.** From dropping in a new video to finished videos now takes 7 interactions instead of 11.
+- **Plainer text.** Interface wording describes actions only; slogan headings were removed. Chinese and English are kept in sync.
+- **Results unchanged.** The interface calls the same API and maps choices to the command line the same way. Identical choices still give pixel-identical videos, verified on 10 frames, and changing only the title re-renders at no API cost.
+
 ## [0.8.0] - 2026-11-05
 
 ### Added
