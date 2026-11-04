@@ -25,7 +25,7 @@ def crop_left(width: float, height: float, center: float | None, subtitles: Sequ
     return max(0.0,min(width-crop_width,center-crop_width/2))
 
 
-SUBTITLE_DETECTION_VERSION = 2
+SUBTITLE_DETECTION_VERSION = 3
 
 
 def _outlined_subtitle_samples(clip: Path, top: int) -> list[dict[str, Any]]:
@@ -117,13 +117,17 @@ def detect_subtitles(clip: Path, settings: Mapping[str, Any]) -> dict[str, Any]:
     finally:
         capture.release()
     observed=np.flatnonzero(columns>0)
+    sample_seconds = float(settings.get("sample_seconds", .5))
     bounds = [max(0,int(observed[0])-2),min(width,int(observed[-1])+3)] if len(observed) else None
     if bounds is None and width > 0 and height > 0 and total > 0:
         samples = _outlined_subtitle_samples(clip, top)
         if samples:
             bounds = [min(s["bounds"][0] for s in samples), max(s["bounds"][1] for s in samples)]
             text_tops = [s["text_top"] for s in samples]
-    return {"bounds":bounds,"samples":samples,"source":[width,height],"strip_y":subtitle_strip_y(height,text_tops),"sample_seconds":float(settings.get("sample_seconds",.5))}
+            # Uniform OCR probes are farther apart on longer clips. Consumers
+            # must use their actual spacing when confirming wide subtitles.
+            sample_seconds = float(np.ceil((total-1)/max(1,min(total,8)-1))/fps)
+    return {"bounds":bounds,"samples":samples,"source":[width,height],"strip_y":subtitle_strip_y(height,text_tops),"sample_seconds":sample_seconds}
 
 
 def subtitle_strip_y(height: int, text_tops: Sequence[float]) -> int:
@@ -132,7 +136,7 @@ def subtitle_strip_y(height: int, text_tops: Sequence[float]) -> int:
 
 def subtitle_mode(detection: Mapping[str, Any], width: int, height: int, settings: Mapping[str, Any]) -> dict[str, Any]:
     """Require consecutive oversized samples, never trigger on a lone edge."""
-    interval=float(settings.get("sample_seconds",.5))
+    interval=float(detection.get("sample_seconds",settings.get("sample_seconds",.5)))
     limit=min(width,height*4/3)-32
     previous=None
     runs=[]

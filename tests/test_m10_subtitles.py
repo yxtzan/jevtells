@@ -75,3 +75,16 @@ def test_inspect_invalidates_old_negative_cache(tmp_path, monkeypatch):
         assert response.json['subtitles']['bounds'] == [350,700]
     assert len(calls) == 1
     assert json.loads(cache.read_text())['signature'] == [*old_signature,SUBTITLE_DETECTION_VERSION]
+
+
+def test_wide_ocr_caption_uses_its_probe_spacing_for_portrait_strip():
+    from jevtells.render.reframe import subtitle_mode
+    detection = {'sample_seconds':1.0, 'strip_y':580, 'samples':[
+        {'seconds':0.0, 'bounds':[50,1230]},
+        {'seconds':1.0, 'bounds':[50,1230]},
+    ]}
+    settings = {'sample_seconds':.5}
+    assert subtitle_mode(detection,1280,720,settings)['mode'] == 'strip'
+    # A genuine gap in observations is still insufficient confirmation.
+    detection['samples'][1]['seconds'] = 3.0
+    assert not subtitle_mode(detection,1280,720,settings)['oversized']
