@@ -5,6 +5,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-05
+
+### Added
+
+- **`jevtells ui`: a local web interface.** It runs on 127.0.0.1 only and needs no internet for the page itself. The wizard has five steps:
+  1. Drop in or choose a video, and set the range (or start automatically).
+  2. Click the person to analyse, with extra anchors after cuts.
+  3. Drag boxes over watermarks to blur them, and check the detected burned-in subtitles.
+  4. Mark who is speaking on a timeline of subtitle cues and shots.
+  5. Generate, with live progress, cost, previews and downloads.
+
+  There are also settings and history pages. The interface calls the same pipeline as the command line, so the same choices give identical results. The API key is only ever shown as set or not set. Built with Flask; Chinese and English.
+- **README rewritten in Chinese with showcase screenshots.**
+
 ## [0.7.0] - 2026-11-04
 
 ### Added
