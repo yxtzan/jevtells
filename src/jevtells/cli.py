@@ -364,7 +364,7 @@ def main() -> None:
         detections = _load_npz(output / "keypoints.npz")
     if arguments.until == "pose":
         return
-    if not arguments.target:
+    if not arguments.target and not picked:
         from .stages.track import sorted_person_indices
         poses_all = detections.get("poses_all", detections.get("poses", []))
         if getattr(poses_all, "ndim", 0) == 4 and len(poses_all):
@@ -377,11 +377,7 @@ def main() -> None:
             if len(first_people) != 1:
                 raise SystemExit("multiple people detected; run `jevtells people INPUT` and pass --target N[@SECONDS]")
     if arguments.until == "people":
-        if arguments.command == "pick":
-        from .stages import pick
-        pick.run(clip, output, arguments.at, detections, input_path, config)
-        return
-    records = _invoke(people.run, clip, output, at=0.0, detections=detections, force=arguments.force, config=config)
+        records = _invoke(people.run, clip, output, at=0.0, detections=detections, force=arguments.force, config=config)
         for record in records:
             print(f"{record['number']}: detector_index={record['detector_index']} box={record['box']} t={record['time']:.2f}s")
         print(f"people={output / 'people_00.0s.png'}")
