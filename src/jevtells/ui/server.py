@@ -97,7 +97,7 @@ def create_app(home: Path | None = None) -> Flask:
 
     @app.after_request
     def headers(response: Any) -> Any:
-        if response.is_json:
+        if response.is_json and request.path.startswith('/api/'):
             response.set_data(redact(response.get_data(as_text=True), root))
         response.headers['Content-Security-Policy'] = "default-src 'self'; img-src 'self' blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'"
         response.headers['X-Content-Type-Options'] = 'nosniff'
@@ -269,6 +269,9 @@ def create_app(home: Path | None = None) -> Flask:
             if jobs.busy():
                 raise RuntimeError('busy')
             rows = people.run(out/'clip.mp4', out, number(request.args.get('at', 0)), out/'detections.npz', config=load_config())
+            source_size, clip_size = media_info(source), media_info(out/'clip.mp4')
+            sx, sy = source_size['width']/clip_size['width'], source_size['height']/clip_size['height']
+            rows = [{**row, 'box': [round(v*(sx if i%2 == 0 else sy)) for i,v in enumerate(row['box'])]} for row in rows]
         return jsonify(rows)
 
     @app.get('/api/timeline')

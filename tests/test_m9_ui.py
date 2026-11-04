@@ -148,3 +148,64 @@ def test_loopback_binding(monkeypatch):
     fake.server_close.assert_called_once()
     with pytest.raises(ValueError):
         server.serve(0)
+
+
+def test_locale_files_and_json_headers(client):
+    for lang in ('zh','en'):
+        response = client.get('/static/locales/'+lang+'.json')
+        assert response.status_code == 200
+        assert len(response.json['steps']) == 5
+        assert isinstance(response.json['stages'], dict)
+    assert client.get('/static/locales/zh.json').json.keys() == client.get('/static/locales/en.json').json.keys()
+    assert "frame-ancestors 'none'" in client.get('/').headers['Content-Security-Policy']
+
+
+def test_timeline_and_coordinate_http_use_shared_mapping(client, tmp_path):
+    headers = token(client)
+    rect = [12,15,100,40]
+    data={'rect':rect, 'display':[640,360], 'source':[1280,720]}
+    assert client.post('/api/coordinates',json=data,headers=headers).json['rect'] == source_rect(**data)
+    data={'kind':'timeline','a':100,'b':20,'width':200,'duration':50}
+    assert client.post('/api/coordinates',json=data,headers=headers).json['intervals'] == [[5,25]]
+
+
+def test_auto_render_uses_resolved_metadata_without_description_api(tmp_path):
+    p = params(start='auto', target_desc='white shirt')
+    output=output_path(p,tmp_path);output.mkdir(parents=True)
+    (output/'run_meta.json').write_text(json.dumps({'parameters':{'start':16.3,'target':['1@0'], 'others_speaking':['2.4-4.9']}}))
+    args=cli_args(p,tmp_path,render_only=True)
+    assert args[args.index('--start')+1]=='16.3'
+    assert '--target-desc' not in args and args[args.index('--target')+1]=='1@0'
+    assert args[-2:]==['--from','render']
+
+
+def test_saved_key_cannot_leak_through_echoed_parameters(client):
+    key='sk-or-this-is-test-secret'
+    headers=token(client)
+    assert client.post('/api/settings',json={'key':key},headers=headers).status_code==200
+    response=client.post('/api/command',json={'params':params(title=key)},headers=headers)
+    assert response.status_code==200 and key not in response.text
+
+
+def test_real_subprocess_logs_redaction_and_cancel(tmp_path, monkeypatch):
+    import subprocess
+    import sys
+    import time
+    key='sk-or-process-test-secret'
+    (tmp_path/'.env').write_text('OPENROUTER_API_KEY='+key+'\n')
+    original=subprocess.Popen
+    def child(_args, **kwargs):
+        return original([sys.executable,'-u','-c',f"import time; print('UI_STAGE pose',flush=True); print('{key}',flush=True); time.sleep(60)"],**kwargs)
+    monkeypatch.setattr('jevtells.ui.jobs.subprocess.Popen',child)
+    jobs=Jobs(tmp_path)
+    jobs.start([],None,'people')
+    deadline=time.monotonic()+8
+    while not any('[redacted]' in row for row in jobs.snapshot()['logs']) and time.monotonic()<deadline:
+        time.sleep(.02)
+    snapshot=jobs.snapshot()
+    assert snapshot['stage']=='pose' and key not in json.dumps(snapshot)
+    assert any('[redacted]' in row for row in snapshot['logs'])
+    jobs.cancel()
+    jobs.worker.join(timeout=5)
+    assert jobs.snapshot()['status']=='cancelled'
+    assert jobs.process is None
