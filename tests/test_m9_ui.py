@@ -209,3 +209,16 @@ def test_real_subprocess_logs_redaction_and_cancel(tmp_path, monkeypatch):
     jobs.worker.join(timeout=5)
     assert jobs.snapshot()['status']=='cancelled'
     assert jobs.process is None
+
+
+def test_person_boxes_scale_from_normalized_clip_to_source(client, tmp_path, monkeypatch):
+    out=tmp_path/'work/interview_s0_dauto';out.mkdir()
+    (out/'detections.npz').touch()
+    monkeypatch.setattr(server.people,'run',lambda *a,**k:[{'number':1,'box':[100,50,500,360],'time':0}])
+    monkeypatch.setattr(server,'media_info',lambda p:{'width':3840,'height':2160} if p.name=='interview.mov' else {'width':1920,'height':1080})
+    result=client.get('/api/people?input=samples/interview.mov')
+    assert result.status_code==200 and result.json[0]['box']==[200,100,1000,720]
+
+
+def test_interval_clamps_outside_drag():
+    assert intervals_from_drag(-20,130,100,50)==[[0,50]]

@@ -36,7 +36,7 @@ def safe_path(root: Path, value: str, area: str | None = None) -> Path:
 
 def intervals_from_drag(a: float, b: float, width: float, duration: float) -> list[list[float]]:
     width, duration = number(width, .001), number(duration, .001)
-    start, end = sorted(max(0., min(width, number(v))) / width * duration for v in (a, b))
+    start, end = sorted(max(0., min(width, number(v, -math.inf))) / width * duration for v in (a, b))
     return [[start, end]] if end > start else []
 
 

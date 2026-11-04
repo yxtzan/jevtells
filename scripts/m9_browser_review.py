@@ -17,6 +17,7 @@ def main() -> None:
         page.on('pageerror',lambda e:errors.append(str(e)))
         page.goto('http://127.0.0.1:7860')
         page.wait_for_function('state.token && Object.keys(state.dict).length > 0')
+        page.wait_for_function("async()=>!['running','cancelling'].includes((await api('/api/jobs')).status)",timeout=900000,polling=2000)
         params=json.loads((ROOT/'work/M9/validation_params.json').read_text())
         output='work/M9/http/tim_interview_s16.3_dauto'
         # Reuse the exact real preprocessing output, without mutating its parameters.
@@ -30,7 +31,7 @@ def main() -> None:
         page.screenshot(path=str(SCREENS/'06-settings.png'),full_page=True)
         page.evaluate("async()=>await go('History')")
         page.wait_for_timeout(800)
-        page.screenshot(path=str(SCREENS/'07-history.png'),full_page=True)
+        page.screenshot(path=str(SCREENS/'07-history.png'),full_page=False)
         page.evaluate("async()=>{await language('en');await go(4);}")
         page.screenshot(path=str(SCREENS/'08-english.png'),full_page=True)
         # Real drag → shared HTTP coordinate converter → source pixels.
@@ -44,6 +45,7 @@ def main() -> None:
         assert drag[2]>100 and drag[3]>40
         page.evaluate('async()=>{state.blur.pop();await go(4);}')
         assert page.locator('#cues button').count()>0
+        subtitles=page.locator('#cues button').count()
         prior=page.evaluate('JSON.stringify(state.others)')
         page.locator('#cues button').first.click()
         assert page.evaluate('JSON.stringify(state.others)')!=prior
@@ -54,7 +56,7 @@ def main() -> None:
         page.reload();page.wait_for_function('state.token && Object.keys(state.dict).length > 0')
         assert not [u for u in requests if not u.startswith('http://127.0.0.1:7860')]
         assert not errors, errors
-        (ROOT/'work/M9/browser_review.json').write_text(json.dumps({'browser':browser.version,'errors':errors,'screens':sorted(p.name for p in SCREENS.glob('*.png')),'drag_source_rect':drag,'timeline_subtitles':page.evaluate('state.timeline?.windows.length || 0'),'external_requests':[]},indent=2))
+        (ROOT/'work/M9/browser_review.json').write_text(json.dumps({'browser':browser.version,'errors':errors,'screens':sorted(p.name for p in SCREENS.glob('*.png')),'drag_source_rect':drag,'timeline_subtitles':subtitles,'external_requests':[]},indent=2))
         browser.close()
         print('Real browser review passed')
 
