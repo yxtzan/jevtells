@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import Any, Mapping, Sequence
 
 import cv2
@@ -22,6 +23,54 @@ def crop_left(width: float, height: float, center: float | None, subtitles: Sequ
     else:
         center=max(width*(.5-max_offset),min(width*(.5+max_offset),center))
     return max(0.0,min(width-crop_width,center-crop_width/2))
+
+
+SUBTITLE_DETECTION_VERSION = 2
+
+
+def _outlined_subtitle_samples(clip: Path, top: int) -> list[dict[str, Any]]:
+    """Confirm high-confidence OCR lines on multiple frames of a bright backdrop.
+
+    The fast glyph pass needs a dark surround. White outlined captions on
+    clothing or a bright room do not satisfy it; recognize actual text before
+    calling those edges captions. Duration alone is never evidence of text.
+    """
+    from rapidocr_onnxruntime import RapidOCR
+
+    engine = RapidOCR(intra_op_num_threads=2, inter_op_num_threads=1)
+    capture = cv2.VideoCapture(str(clip))
+    width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = capture.get(cv2.CAP_PROP_FPS) or 30
+    candidates = []
+    try:
+        for frame in np.unique(np.linspace(0, max(0, total-1), min(total, 8), dtype=int)):
+            capture.set(cv2.CAP_PROP_POS_FRAMES, int(frame))
+            ok, image = capture.read()
+            if not ok:
+                raise RuntimeError("cannot decode burned-subtitle OCR sample")
+            rows, _ = engine(image[top:])
+            for box, text, confidence in rows or []:
+                xy = np.asarray(box)
+                x0, y0 = xy.min(axis=0)
+                x1, y1 = xy.max(axis=0)
+                if (confidence >= .9 and len(re.findall(r"[^\W_]", text, re.UNICODE)) >= 4
+                        and height*.012 <= y1-y0 <= height*.09 and x1-x0 >= height*.08):
+                    candidates.append({"seconds":int(frame)/fps,
+                                       "bounds":[max(0, int(x0)-2), min(width, int(x1)+3)],
+                                       "text_top":top+int(y0), "text_bottom":top+int(y1)})
+    finally:
+        capture.release()
+    # A lone recognized logo or an isolated OCR hallucination is insufficient.
+    # Changing speech text can share the same baseline across sampled frames.
+    confirmed = []
+    for row in candidates:
+        if any(other["seconds"] != row["seconds"]
+               and abs(other["text_bottom"]-row["text_bottom"]) <= height*.025
+               for other in candidates):
+            confirmed.append({k:v for k,v in row.items() if k != "text_bottom"})
+    return confirmed
 
 
 def detect_subtitles(clip: Path, settings: Mapping[str, Any]) -> dict[str, Any]:
@@ -68,7 +117,13 @@ def detect_subtitles(clip: Path, settings: Mapping[str, Any]) -> dict[str, Any]:
     finally:
         capture.release()
     observed=np.flatnonzero(columns>0)
-    return {"bounds":[max(0,int(observed[0])-2),min(width,int(observed[-1])+3)] if len(observed) else None,"samples":samples,"source":[width,height],"strip_y":subtitle_strip_y(height,text_tops),"sample_seconds":float(settings.get("sample_seconds",.5))}
+    bounds = [max(0,int(observed[0])-2),min(width,int(observed[-1])+3)] if len(observed) else None
+    if bounds is None and width > 0 and height > 0 and total > 0:
+        samples = _outlined_subtitle_samples(clip, top)
+        if samples:
+            bounds = [min(s["bounds"][0] for s in samples), max(s["bounds"][1] for s in samples)]
+            text_tops = [s["text_top"] for s in samples]
+    return {"bounds":bounds,"samples":samples,"source":[width,height],"strip_y":subtitle_strip_y(height,text_tops),"sample_seconds":float(settings.get("sample_seconds",.5))}
 
 
 def subtitle_strip_y(height: int, text_tops: Sequence[float]) -> int:

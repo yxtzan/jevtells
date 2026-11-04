@@ -175,13 +175,13 @@ def create_app(home: Path | None = None) -> Flask:
         info = media_info(source)
         # Reuse M5's generic subtitle detection, never a sample-specific rule.
         cache = safe_path(root, f'work/.ui_probe/{source.stem}.json', 'work')
-        signature = [source.stat().st_size, source.stat().st_mtime_ns]
+        from ..render.reframe import SUBTITLE_DETECTION_VERSION, detect_subtitles
+        signature = [source.stat().st_size, source.stat().st_mtime_ns, SUBTITLE_DETECTION_VERSION]
         detection = read_json(cache, {})
         if detection.get('signature') != signature:
             with jobs.lock:
                 if jobs.busy():
                     raise RuntimeError('busy')
-                from ..render.reframe import detect_subtitles
                 detection = {'signature': signature, 'detection': detect_subtitles(source, load_config()['render']['reframe'])}
                 cache.parent.mkdir(parents=True, exist_ok=True)
                 cache.write_text(json.dumps(detection))
