@@ -130,7 +130,7 @@
 | 素材 | `samples/leijun_areyouok.mov`、`samples/jensen_panel.mov`，说明见 `docs/samples.md`。旧目录 `work/10月3日_s0_dauto/` 已作废 |
 | 交接记录 | 2026-10-03 曾有另一位 Claude 接手两轮（M2-fix 的后续修正），它给写代码的模型的指令没有存进 `docs/prompts/`，改动内容见 `work/M2_report.md` 的 M2-fix 一节 |
 
-**下一步**：v0.7.0 已发布（M8：点选、描述选人、人脸认人、`--start auto`，均为可选；截图实验结论是置信度下降，默认关闭）。双人模式搁置（`m7-two-person`，不合并）。下一步 M9 发布 v1.0.0：需要更多新素材验证、README 效果动图（用户自己录一段）、仓库公开。
+**下一步**：M9（`docs/prompts/M9.md`）：做本地可视化界面 `jevtells ui`。用户希望不用终端就能处理新素材，开源用户也需要。之后 M10 发布 v1.0.0。
 
 **版权提醒**：模糊水印后发到小红书时，建议在笔记正文里注明素材来源（如「素材：B 站 @环球新知」），保留原作者署名。
 
