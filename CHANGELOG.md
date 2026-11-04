@@ -5,6 +5,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-04
+
+### Added
+
+- **`jevtells pick VIDEO [--at SECONDS]`.** Shows the numbered people; click a person or press their number to select them. Move the time slider to add another anchor after a cut. Enter saves the choice to `work/<clip_id>/target.json`, which `run` uses when `--target` is not given.
+- **`--target-desc "TEXT"` (experimental).** Selects the person matching a description. Jev 1.14 first confirms that exactly one such person is in the frame, then draws a box around them, and the box is matched to a detected person. Ambiguous cases stop with an error instead of guessing. It chose correctly 12 out of 12 times on the two sample clips.
+- **`--face-identity` (opt-in).** After a cut, the person is recognised by face (OpenCV YuNet + SFace) before clothing colour, so a change of clothing colour no longer loses them. Model files come from `jevtells download` and are checked by `doctor`.
+- **`--start auto` (opt-in).** Starts the clip where the chosen person is first alone on screen and speaking.
+- **`--jev-images` (experimental, default off).** Also sends Jev three cropped frames of the person for each sentence (Jev 1.14 image input). On the two sample clips the images made Jev less certain, not more: average intent/emotion confidence dropped from 0.59 to 0.50, so it stays off.
+
+### Changed
+
+- With none of the new options, videos are pixel-identical to 0.6.0.
+
+### Notes
+
+- The two-person mode developed in the `m7-two-person` branch is on hold and not merged. Automatic speaker detection reached only 62.5%.
+
 ## [0.6.0] - 2026-10-07
 
 ### Added

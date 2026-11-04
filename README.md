@@ -4,7 +4,7 @@
 >
 > 上传一段说话人视频，得到一段标注了手势、意图和 Jev 判定的视频。
 
-**Status: v0.6.0.** Feed in a video, pick the person to analyse, and get back two annotated videos: landscape 16:9 and portrait 3:4.
+**Status: v0.7.0.** Feed in a video, pick the person to analyse, and get back two annotated videos: landscape 16:9 and portrait 3:4.
 
 - **What's on screen:** gesture labels that follow the hands, Jev's scores and trends, intent and emotion, and a one-line narration grounded in the measured data.
 - **Layout adapts to the shot:**
@@ -64,6 +64,8 @@ jevtells people path/to/video.mp4            # writes work/<clip_id>/people_00.0
 jevtells people path/to/video.mp4 --at 12    # numbering at another moment
 ```
 
+Or pick the person with a click: `jevtells pick path/to/video.mp4` opens the frame, you click the person (or press their number), and `run` then uses that choice automatically.
+
 **2. Run with the person you want to analyse:**
 
 ```bash
@@ -109,7 +111,10 @@ Results go to `work/<clip_id>/`:
 | `--subtitles on` / `off` | Draw subtitles (default `on`); use `off` if the video already has burned-in subtitles |
 | `--subtitle-source auto` / `ocr` / `asr` / `srt` | Where the subtitle text comes from. `auto` reads burned-in subtitles from the picture when `--subtitles off`, otherwise transcribes the audio |
 | `--debug-layout` | Save one picture per shot showing the speaker area, no-go zones and chosen label positions |
-| `--start`, `--duration` | Analyse only part of the video (seconds) |
+| `--start`, `--duration` | Analyse only part of the video (seconds); `--start auto` starts where the chosen person is first alone on screen and speaking |
+| `--face-identity` | After a cut, recognise the person by face before clothing colour (more robust, a little slower) |
+| `--target-desc TEXT` | Experimental: choose the person by a description, e.g. "white T-shirt, glasses"; stops with an error when unsure |
+| `--jev-images` | Experimental: also send Jev cropped frames of the person; off by default because it did not improve results in testing |
 | `--srt FILE` | Use your own subtitles instead of automatic transcription |
 | `--force` | Recompute every stage (otherwise cached results are reused) |
 | `--from STAGE`, `--until STAGE` | Run only part of the pipeline; `run` goes all the way to `render` by default |
