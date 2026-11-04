@@ -222,3 +222,39 @@ def test_person_boxes_scale_from_normalized_clip_to_source(client, tmp_path, mon
 
 def test_interval_clamps_outside_drag():
     assert intervals_from_drag(-20,130,100,50)==[[0,50]]
+
+
+def test_success_marker_is_ready_when_task_completes(tmp_path, monkeypatch):
+    import subprocess
+    import sys
+    original=subprocess.Popen
+    monkeypatch.setattr('jevtells.ui.jobs.subprocess.Popen',lambda _args,**kwargs:original([sys.executable,'-c','print("UI_STAGE render")'],**kwargs))
+    output=tmp_path/'work/result';output.mkdir(parents=True)
+    saved=json.dumps(params())
+    (output/'ui_params.json').write_text(saved)
+    jobs=Jobs(tmp_path)
+    jobs.start([],output,'run')
+    jobs.worker.join(timeout=5)
+    assert jobs.snapshot()['status']=='complete'
+    assert (output/'ui_complete_params.json').read_text()==saved
+
+
+def test_equivalent_command_exposes_render_only_mode(client, tmp_path):
+    p=normalize(params())
+    output=output_path(p,tmp_path);output.mkdir(parents=True)
+    (output/'ui_complete_params.json').write_text(json.dumps(p))
+    (output/'narration.json').write_text('{}')
+    changed={**p,'subtitles':'off'}
+    result=client.post('/api/command',json={'params':changed},headers=token(client)).json
+    assert result['args'][-2:]==['--from','render']
+    changed['others_speaking']=[[0,1]]
+    result=client.post('/api/command',json={'params':changed},headers=token(client)).json
+    assert '--from' not in result['args']
+
+
+def test_media_symlink_cannot_escape_into_home_root(client, tmp_path):
+    (tmp_path/'private.mp4').write_bytes(b'private')
+    (tmp_path/'samples/alias.mp4').symlink_to(tmp_path/'private.mp4')
+    assert client.get('/media/samples/alias.mp4').status_code==400
+    with pytest.raises(ValueError):
+        safe_path(tmp_path,'samples/alias.mp4')

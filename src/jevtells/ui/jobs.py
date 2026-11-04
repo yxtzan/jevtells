@@ -82,6 +82,10 @@ class Jobs:
                 rows = [json.loads(row) for row in ledger.read_text().splitlines()[before:]] if ledger.exists() else []
                 self.job['cost'] = sum(float(row.get('cost') or 0) for row in rows)
                 self.job['cost_unknown'] = any(row.get('cost') is None for row in rows)
+                if self.job['status'] == 'complete' and self.job['mode'] == 'run' and output and (output/'ui_params.json').is_file():
+                    # Publish the successful parameter snapshot under the same
+                    # lock as completion, before a subsequent job can start.
+                    (output/'ui_complete_params.json').write_text((output/'ui_params.json').read_text())
         except Exception as exc:
             with self.lock:
                 self.job['status'] = 'failed'

@@ -215,8 +215,13 @@ def create_app(home: Path | None = None) -> Flask:
     def command() -> Any:
         import shlex
         p = normalize(request.json['params'])
-        args = cli_args(p, root)
+        args = cli_args(p, root, render_only=render_cached(p, 'run', output_path(p, root)))
         return jsonify(args=args, command=shlex.join(['jevtells', *args]), output=str(output_path(p, root).relative_to(root)))
+
+    def render_cached(p: dict[str, Any], mode: str, output: Path) -> bool:
+        prior = read_json(output/'ui_complete_params.json', {})
+        return bool(mode == 'run' and prior and all(p.get(k) == prior.get(k) for k in set(p)|set(prior) if k not in RENDER_FIELDS)
+                    and (output/'narration.json').is_file())
 
     @app.post('/api/jobs')
     def start() -> Any:
@@ -230,24 +235,13 @@ def create_app(home: Path | None = None) -> Flask:
             if jobs.busy():
                 raise RuntimeError('busy')
             # Only a successful full run is eligible for a render-only repeat.
-            prior = read_json(output/'ui_complete_params.json', {})
-            render_only = bool(mode == 'run' and prior and all(p.get(k) == prior.get(k) for k in set(p)|set(prior) if k not in RENDER_FIELDS)
-                               and (output/'narration.json').is_file())
+            render_only = render_cached(p, mode, output)
             args = cli_args(p, root, mode, render_only=render_only)
             output.mkdir(parents=True, exist_ok=True)
             if mode != 'people':
                 (output/'ui_params.json').write_text(json.dumps(p, ensure_ascii=False, indent=2))
             result = jobs.start(args, output, mode)
             result['render_only'] = render_only
-            if mode == 'run':
-                worker = jobs.worker
-                def save_complete() -> None:
-                    assert worker is not None
-                    worker.join()
-                    with jobs.lock:
-                        if jobs.job.get('id') == result['id'] and jobs.job['status'] == 'complete':
-                            (output/'ui_complete_params.json').write_text(json.dumps(p, ensure_ascii=False, indent=2))
-                threading.Thread(target=save_complete, daemon=True).start()
         return jsonify(result)
 
     @app.get('/api/jobs')

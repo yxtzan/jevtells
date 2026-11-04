@@ -19,10 +19,15 @@ def main() -> None:
         browser=p.chromium.launch(executable_path='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless=True)
         page=browser.new_page(viewport={'width':1440,'height':1080})
         errors=[]
+        def until(expression: str, timeout: int = 180000) -> None:
+            deadline=time.monotonic()+timeout/1000
+            while not page.evaluate(expression):
+                if time.monotonic()>deadline: raise TimeoutError(expression)
+                page.wait_for_timeout(300)
         page.on('pageerror',lambda exc:errors.append(str(exc)))
         page.goto('http://127.0.0.1:7860')
-        page.wait_for_function('state.token && Array.isArray(state.dict.steps)')
-        page.wait_for_function("async()=>!['running','cancelling'].includes((await api('/api/jobs')).status)",timeout=900000,polling=2000)
+        until('state.token && Array.isArray(state.dict.steps)')
+        until("async()=>!['running','cancelling'].includes((await api('/api/jobs')).status)",timeout=900000)
         await_start=time.monotonic()
         def action(label):
             actions.append(label)
@@ -30,23 +35,23 @@ def main() -> None:
         # Use the native drop handler with a real local video File object.
         transfer=page.evaluate_handle("""async()=>{const response=await fetch('/media/samples/m9_novice.mov');const blob=await response.blob();const data=new DataTransfer();data.items.add(new File([blob],'新手测试.mov',{type:'video/quicktime'}));return data;}""")
         page.dispatch_event('#drop','drop',{'dataTransfer':transfer});action('1. 拖入新视频')
-        page.wait_for_function("state.input.startsWith('samples/video_') && state.info?.duration>0")
+        until("state.input.startsWith('samples/video_') && state.info?.duration>0")
         page.locator('#next').click();action('2. 下一步：选主角')
         page.locator('#speaker').fill('Tim');action('3. 填写主角名字')
         page.locator('#detect').click();action('4. 检测画面中的人')
-        page.wait_for_function("state.job?.mode==='people' && state.job?.status==='complete'",timeout=180000)
+        until("state.job?.mode==='people' && state.job?.status==='complete'",timeout=180000)
         page.locator('#personBoxes rect[role=button]').first.click();action('5. 点击人物框')
         page.locator('#next').click();action('6. 下一步：画面处理')
         bounds=page.locator('#blurFrame').bounding_box()
         page.mouse.move(bounds['x']+bounds['width']*.012,bounds['y']+bounds['height']*.021)
         page.mouse.down();page.mouse.move(bounds['x']+bounds['width']*.205,bounds['y']+bounds['height']*.104,steps=8);page.mouse.up();action('7. 拖框模糊水印')
-        page.wait_for_function('state.blur.length===1')
+        until('state.blur.length===1')
         page.locator('#next').click();action('8. 下一步：谁在说话')
         page.locator('#prepare').click();action('9. 运行预处理')
-        page.wait_for_function("state.job?.mode==='prepare' && state.job?.status==='complete' && state.timeline?.windows.length>0",timeout=180000)
+        until("state.job?.mode==='prepare' && state.job?.status==='complete' && state.timeline?.windows.length>0",timeout=180000)
         page.locator('#next').click();action('10. 下一步：生成')
         page.locator('#generate').click();action('11. 生成成片')
-        page.wait_for_function("state.job?.mode==='run' && state.job?.status==='complete' && !document.getElementById('results').hidden",timeout=240000)
+        until("state.job?.mode==='run' && state.job?.status==='complete' && !document.getElementById('results').hidden",timeout=240000)
         result=page.evaluate('({input:state.input, output:state.output, job:state.job, duration:state.info.duration, params:params(), subtitle_blocks:state.timeline.windows.length})')
         assert result['job']['status']=='complete'
         assert result['duration']<4.1

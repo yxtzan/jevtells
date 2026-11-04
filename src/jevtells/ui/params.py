@@ -25,11 +25,11 @@ def safe_path(root: Path, value: str, area: str | None = None) -> Path:
     path = Path(value)
     if path.is_absolute() or ".." in path.parts or "\\" in value or "\x00" in value:
         raise ValueError("unsafe_path")
-    allowed = root / area if area else root
+    if not area and (not path.parts or path.parts[0] not in {"samples", "work"}):
+        raise ValueError("unsafe_path")
+    allowed = root / (area or path.parts[0])
     result = (root / path).resolve()
     if not result.is_relative_to(allowed.resolve()) or result == allowed.resolve():
-        raise ValueError("unsafe_path")
-    if not area and (not path.parts or path.parts[0] not in {"samples", "work"}):
         raise ValueError("unsafe_path")
     return result
 
