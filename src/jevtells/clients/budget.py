@@ -11,8 +11,12 @@ def before_request():
     configured=os.environ.get('JEVTELLS_API_LEDGER')
     if not configured: return
     rows=_rows(Path(configured))
-    if any(row.get('cost') is None for row in rows): raise RuntimeError('API budget blocked: a response has unknown cost; reconcile ledger before continuing')
-    total=sum(row['cost'] for row in rows)
+    unresolved=[row for row in rows if row.get('cost') is None]
+    # An audited failed request may explicitly reserve a conservative amount
+    # while retaining its unknown billed cost. Unreserved unknowns still stop.
+    if any(not isinstance(row.get('reserved_cost'), (int,float)) or not 0 < row['reserved_cost'] for row in unresolved):
+        raise RuntimeError('API budget blocked: a response has unknown cost; reconcile ledger before continuing')
+    total=sum(float(row['cost']) if row.get('cost') is not None else float(row['reserved_cost']) for row in rows)
     reserve=float(os.environ.get('JEVTELLS_API_RESERVE','0.05'))
     limit=float(os.environ.get('JEVTELLS_API_LIMIT','0.30'))
     if total+reserve>limit: raise RuntimeError(f'API budget exhausted: ${total:.8f} + ${reserve:.2f} reserve exceeds ${limit:.2f}')
@@ -24,5 +28,6 @@ def record(event):
     path=Path(configured);path.parent.mkdir(parents=True,exist_ok=True)
     rows=_rows(path);total=sum(float(row.get('cost') or 0) for row in rows)+float(event.get('cost') or 0)
     receipt={k:event.get(k) for k in ('status','error','cost','cost_reason','model','attempt')}
-    receipt.update(sequence=len(rows)+1,total_cost=total)
+    reserved=sum(float(row.get('reserved_cost',0)) for row in rows if row.get('cost') is None)
+    receipt.update(sequence=len(rows)+1,total_cost=total,reserved_cost_total=reserved,committed_budget=total+reserved)
     with path.open('a') as handle: handle.write(json.dumps(receipt,ensure_ascii=False)+'\n')

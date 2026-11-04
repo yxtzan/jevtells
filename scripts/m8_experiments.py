@@ -41,6 +41,37 @@ def describe(judgment):
     return f'{scores}; {choices}'
 
 
+def summarize_comparison(groups, threshold):
+    """Use the same completed windows; score answers have no confidence field."""
+    from itertools import combinations
+    from statistics import mean
+    counts={}
+    for group,rows in groups.items():
+        valid=[r for r in rows.values() if r['status']=='completed']
+        confidence={key:[r['judgment'][key]['confidence'] for r in valid
+                         if r['judgment'].get(key) and r['judgment'][key].get('confidence') is not None]
+                    for key in ('intent','emotion')}
+        combined=confidence['intent']+confidence['emotion']
+        counts[group]={'completed':len(valid),
+                      'average_intent_confidence':mean(confidence['intent']) if confidence['intent'] else None,
+                      'average_emotion_confidence':mean(confidence['emotion']) if confidence['emotion'] else None,
+                      'average_choice_confidence':mean(combined) if combined else None,
+                      'confidence_values':len(combined),
+                      'not_obvious_windows':sum(any((r['judgment'].get(key) or {}).get('confidence') is None or r['judgment'][key]['confidence']<threshold for key in ('intent','emotion')) for r in valid) if valid else None,
+                      'cost':sum(r['cost'] for r in valid) if valid and all(r.get('cost') is not None for r in valid) else None,
+                      'elapsed_s':sum(r['elapsed_s'] for r in valid) if valid else None}
+    def compare(names):
+        identifiers=set.intersection(*(set(groups[name]) for name in names))
+        comparable=[identifier for identifier in identifiers if all(groups[name][identifier]['status']=='completed' for name in names)]
+        different={key:[identifier for identifier in sorted(comparable) if len({(groups[name][identifier]['judgment'].get(key) or {}).get('label') for name in names})>1] for key in ('intent','emotion')}
+        return {'comparable_windows':len(comparable),'intent_different':len(different['intent']),
+                'emotion_different':len(different['emotion']),'either_different':len(set(different['intent'])|set(different['emotion'])),
+                'window_ids':different}
+    differences={'all_three':compare(list(groups)),
+                 'pairwise':{' vs '.join(pair):compare(pair) for pair in combinations(groups,2)}}
+    return counts,differences
+
+
 def evaluate(directory, name, out, config, live=False):
     destination=out/name;destination.mkdir(parents=True,exist_ok=True)
     windows=read(directory/'windows.json');states=read(directory/'states.json')
@@ -114,14 +145,8 @@ def evaluate(directory, name, out, config, live=False):
             current.append(describe(r.get('judgment'))+f"; {r.get('elapsed_s')}s; ${r.get('cost')}" if r['status']=='completed' else r['status'])
         subtitle=window.get('subtitle','').replace('|','\\|').replace('\n',' ')
         lines.append(f'| {identifier} {window["t0"]:.3f}–{window["t1"]:.3f}s<br>{subtitle} | {pictures} | {describe(historical.get(identifier))} | '+ ' | '.join(current)+' |')
-    # Confidence below the renderer's threshold is counted without asserting accuracy.
-    counts={}
-    for group,_,_ in group_specs:
-        valid=[r for r in groups[group].values() if r['status']=='completed']
-        counts[group]={'completed':len(valid),'not_obvious_windows':sum(any((r['judgment'].get(key) or {}).get('confidence',0)<config['judgment']['min_confidence'] for key in ('intent','emotion')) for r in valid) if valid else None,
-                      'cost':sum(r['cost'] for r in valid) if valid and all(r.get('cost') is not None for r in valid) else None,
-                      'elapsed_s':sum(r['elapsed_s'] for r in valid) if valid else None}
-    write(destination/'comparison.json',{'windows':windows,'groups':groups,'summary':counts})
+    counts,differences=summarize_comparison(groups,config['judgment']['min_confidence'])
+    write(destination/'comparison.json',{'windows':windows,'groups':groups,'summary':counts,'differences':differences})
     return '\n'.join(lines),groups,frames
 
 
@@ -134,12 +159,32 @@ def evaluate_descriptions(directory,name,out,config,live):
     for t in times:
         for description,expected in examples:
             identifier=f'{name}_{t:g}_{expected}';destination=out/'descriptions'/identifier
+            receipt=destination/'evaluation.json'
+            if live and receipt.exists():
+                rows.append(read(receipt))
+                continue
             if live:
-                number,at=target_desc.select(directory/'clip.mp4',data,description,t,destination,config)
-                row={'selected':number,'correct':number==expected,'status':'completed'}
+                started=time.perf_counter()
+                try:
+                    number,at=target_desc.select(directory/'clip.mp4',data,description,t,destination,config)
+                    row={'selected':number,'correct':number==expected,'status':'completed','reason':None}
+                except ValueError as error:
+                    # Conservative rejection is an experimental result, not an
+                    # API failure. Preserve it and evaluate the other examples.
+                    row={'selected':None,'correct':None,'status':'rejected','reason':str(error)}
+                responses=[read(path) for path in (destination/'presence_raw.json',destination/'box_raw.json') if path.exists()]
+                row.update(elapsed_s=time.perf_counter()-started,
+                           cost=sum(r['cost'] for r in responses) if all(r.get('cost') is not None for r in responses) else None)
+                if (destination/'presence_raw.json').exists():
+                    row['presence_probability']=read(destination/'presence_raw.json')['raw']['answers']['present']['noul']
+                if (destination/'selection.json').exists():
+                    row['selection']=read(destination/'selection.json')
             else:
                 row={'selected':None,'correct':None,'status':'not_run: expired API key'}
-            rows.append({'video':name,'at':t,'description':description,'expected_person':expected,**row})
+            record={'video':name,'at':t,'description':description,'expected_person':expected,**row}
+            rows.append(record)
+            if live:
+                write(receipt,record)
     return rows
 
 
@@ -177,15 +222,16 @@ def main():
     parser.add_argument('--tim',type=Path,default=Path('work/M8/default_tim'))
     parser.add_argument('--jensen',type=Path,default=Path('work/M8/default_jensen'))
     parser.add_argument('--output',type=Path,default=Path('work/M8'))
+    parser.add_argument('--ledger',type=Path,help='shared ledger for this API run, including smoke requests')
     parser.add_argument('--live',action='store_true')
     parser.add_argument('--render',action='store_true')
     args=parser.parse_args();config=load_config();out=args.output.resolve();out.mkdir(parents=True,exist_ok=True)
     if args.render and not args.live:
         raise ValueError('--render requires --live and a complete screenshot comparison')
     if args.live:
-        os.environ['JEVTELLS_API_LEDGER']=str(out/'api_ledger.jsonl')
+        os.environ['JEVTELLS_API_LEDGER']=str((args.ledger or out/'api_ledger.jsonl').resolve())
         os.environ['JEVTELLS_API_LIMIT']='0.30'
-    content=['# M8 Jev images review','','Offline preparations are real frames. Missing API results are explicitly marked, not filled from earlier versions.','']
+    content=['# M8 Jev images review','','Historical results are explicitly separated from new API responses. Speaker-other/offscreen skips follow the default single-person policy. Each completed cell reports actual API results, latency and cost.','']
     descriptions=[];tim_results=None
     for name,directory in (('tim',args.tim),('jensen',args.jensen)):
         text,groups,frames=evaluate(directory,name,out,config,args.live);content.extend((text,''))

@@ -449,6 +449,7 @@ jev_images:
   enabled: false
   model: typesafe/jev-1.14
   min_side: 256
+  face_min_side: 320
   max_side: 1568
   min_pixels: 78400
   preferred_side: 640

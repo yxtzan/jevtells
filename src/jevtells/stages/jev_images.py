@@ -85,6 +85,8 @@ def select_frames(window, points, actions):
 
 
 def extract(clip, out, windows, points, actions, settings, face_only=False):
+    if face_only:
+        settings = {**settings,'min_side':settings['face_min_side'],'min_pixels':settings['face_min_side']**2}
     directory = Path(out)/('faces' if face_only else 'frames'); directory.mkdir(parents=True,exist_ok=True)
     result = {}; manifest = {}
     for window in windows:
