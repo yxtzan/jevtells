@@ -71,6 +71,10 @@ def resolve(arguments, config):
         anchors=[select(clip,data,arguments.target_desc,arguments.target_at,full/'target_desc',config)]
         arguments.target_desc=None
     data,points,clip=source_track(arguments,config,anchors,full)
+    if not arguments.target and not picked:
+        visible=track.sorted_person_indices(data['poses_all'],0,float(data['width']),float(data['height']))
+        if len(visible)!=1:
+            raise ValueError('--start auto requires pick or --target for a multi-person opening')
     intervals=parse_intervals(arguments.others_speaking)
     cuts=shots.detect_hard_cuts(clip,config['shots'])['cuts']
     start,candidate=find_start(points,data,cuts,intervals,config)

@@ -219,6 +219,7 @@ render:
     compact_card_size: 14
   model_names:
     'typesafe/jev-1.13*': Jev 1.13
+    'typesafe/jev-1.14*': Jev 1.14
     'google/gemini-3.1-flash-lite*': Gemini Flash Lite
     'google/gemini-3.8-flash*': Gemini 3.8 Flash
   fps: 30
@@ -477,3 +478,7 @@ auto_start:
 synthetic_recolor:
   hue_shift: 60
   saturation_floor: 160
+
+speaking_images:
+  positive_probability: 0.80
+  negative_probability: 0.20

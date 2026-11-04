@@ -331,7 +331,10 @@ def main() -> None:
     output.mkdir(parents=True, exist_ok=True)
     from .stages.pick import resolve as resolve_pick
     canonical = Path("work") / _clip_id(input_path, 0.0, None)
-    anchors, picked = resolve_pick(arguments.target, output, canonical, input_path)
+    if arguments.target_desc:
+        anchors, picked = _parse_targets([]), None
+    else:
+        anchors, picked = resolve_pick(arguments.target, output, canonical, input_path)
     if picked and not arguments.target_desc:
         if arguments.start != 0:
             from .stages.auto_start import rebase, source_track
@@ -345,12 +348,13 @@ def main() -> None:
     identity_changed = bool(saved_config.get('face_identity',{}).get('enabled',False)) != bool(config['face_identity']['enabled'])
     saved_states = json.loads((output/'states.json').read_text()) if (output/'states.json').exists() else {}
     images_changed = bool(any('frames' in row for row in saved_states.values())) != bool(config['jev_images']['enabled'])
+    judgments_changed = False
     others_changed = False
     subtitle_changed = False
 
     def force_stage(stage: str) -> bool:
         rerun_from = arguments.from_stage
-        return bool(arguments.force or (identity_changed and stage in _TARGET_STAGES) or (images_changed and stage in {"state", "judge", "narrate", "render"}) or (rerun_from and _STAGE_ORDER.index(stage) >= _STAGE_ORDER.index(rerun_from)) or (targets_changed and stage in _TARGET_STAGES) or (others_changed and stage in {"actions", "state", "debug", "judge", "narrate", "render"}) or (subtitle_changed and stage in {"segment", "actions", "scene", "state", "debug", "judge", "narrate", "render"}))
+        return bool(arguments.force or (judgments_changed and stage in {"narrate", "render"}) or (identity_changed and stage in _TARGET_STAGES) or (images_changed and stage in {"state", "judge", "narrate", "render"}) or (rerun_from and _STAGE_ORDER.index(stage) >= _STAGE_ORDER.index(rerun_from)) or (targets_changed and stage in _TARGET_STAGES) or (others_changed and stage in {"actions", "state", "debug", "judge", "narrate", "render"}) or (subtitle_changed and stage in {"segment", "actions", "scene", "state", "debug", "judge", "narrate", "render"}))
 
     started = time.perf_counter()
     stage_times: dict[str, float] = {}
@@ -506,7 +510,9 @@ def main() -> None:
         finish()
         return
     stage_start = time.perf_counter()
+    previous_judgments = json.loads((output/'judgments.json').read_text()) if (output/'judgments.json').exists() else None
     judgments = _invoke(judge.run, states, output, force_stage("judge"), config=config)
+    judgments_changed = previous_judgments != {key:value for key,value in judgments.items() if key!='_meta'}
     stage_times["judge"] = time.perf_counter() - stage_start
     if arguments.until == "judge":
         finish()

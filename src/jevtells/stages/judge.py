@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -175,8 +176,6 @@ def _stats(result: Mapping[str, Any]) -> dict[str, Any]:
 def run(states: Mapping[str, Any] | None, out: Path, force: bool = False, config: Mapping[str, Any] | None = None, client: OpenRouterClient | None = None) -> dict[str, Any]:
     out = Path(out)
     destination = out / "judgments.json"
-    if destination.exists() and not force:
-        return json.loads(destination.read_text(encoding="utf-8"))
     if states is None:
         states = json.loads((out / "states.json").read_text(encoding="utf-8"))
     windows_path = out / "windows.json"
@@ -185,13 +184,25 @@ def run(states: Mapping[str, Any] | None, out: Path, force: bool = False, config
     model = str((config or {}).get("jev", {}).get("model", "typesafe/jev-1.13"))
     if (config or {}).get('jev_images',{}).get('enabled',False):
         model = str(config['jev_images']['model'])
+    signature_states = json.loads(json.dumps(states))
+    for row in signature_states.values():
+        if 'frames' in row:
+            row['frames'] = [hashlib.sha256(Path(path).read_bytes()).hexdigest() for path in row['frames']]
+    input_signature = hashlib.sha256(json.dumps({'model':model,'states':signature_states,'questions':base},sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+    meta_path = out/'judge_meta.json'
+    previous_meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+    if destination.exists() and not force:
+        same = previous_meta.get('input_signature') == input_signature
+        legacy = not previous_meta.get('input_signature') and model == 'typesafe/jev-1.13' and not any('frames' in row for row in states.values()) and previous_meta.get('model',model) == model
+        if same or legacy:
+            return json.loads(destination.read_text(encoding='utf-8'))
     active_client = client or OpenRouterClient()
     if isinstance(active_client, OpenRouterClient) and hasattr(active_client, 'audit_dir'):
         active_client.audit_dir = out/'raw'
     raw_dir = out / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
     judgments: dict[str, Any] = {}
-    aggregate = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "cost": 0.0, "failed": 0}
+    aggregate = {"input_signature":input_signature,"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "cost": 0.0, "failed": 0}
     for window_id, state in states.items():
         if window_id in skipped:
             judgments[window_id] = None
@@ -205,7 +216,7 @@ def run(states: Mapping[str, Any] | None, out: Path, force: bool = False, config
                 image_state, assets = bind(state)
                 if not assets:
                     raise ValueError('Image-enabled judgment has no target frames')
-                questions = {key:{**question,'instructions':question['instructions']+' Also consider expressions and posture in `frames`.'} for key,question in questions.items()}
+                questions = {key:{**question,'instructions':str(question.get('instructions',question.get('question','')))+' Also consider expressions and posture in `frames`.'} for key,question in questions.items()}
                 result = active_client.decide(image_state, questions, model, assets=assets)
             else:
                 result = active_client.decide(state, questions, model)

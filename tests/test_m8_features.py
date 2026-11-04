@@ -120,3 +120,65 @@ def test_default_state_has_exactly_five_fields_and_images_are_opt_in(tmp_path,mo
     assert enriched['W00']['frames']==['a.jpg','b.jpg','c.jpg']
     config['jev_images']['enabled']=False
     assert 'frames' not in state.run(windows,{},'room','A',tmp_path,config=config)['W00']
+
+
+def test_judge_image_assets_and_model_change_invalidate_cache(tmp_path):
+    import cv2
+    path=tmp_path/'frame.jpg';cv2.imwrite(str(path),np.ones((280,280,3),np.uint8))
+    class Client:
+        def __init__(self):self.calls=[]
+        def decide(self,state,questions,model,**kwargs):
+            self.calls.append((model,state,kwargs))
+            if 'frames' in state:
+                assert set(state['frames'])==set(kwargs['assets'])
+                assert 'Also consider expressions' in questions['intent']['instructions']
+            return {'raw':{'answers':{}},'cost':.001,'usage':{}}
+    states={'W00':{'measured_actions':[]}}
+    client=Client();config=load_config()
+    judge.run(states,tmp_path,config=config,client=client)
+    judge.run(states,tmp_path,config=config,client=client)
+    assert len(client.calls)==1
+    config['jev']['model']='typesafe/jev-1.14'
+    judge.run(states,tmp_path,config=config,client=client)
+    assert len(client.calls)==2
+    config['jev_images']['enabled']=True;states['W00']['frames']=[str(path)]*3
+    judge.run(states,tmp_path,config=config,client=client)
+    assert len(client.calls)==3
+    assert client.calls[-1][0]=='typesafe/jev-1.14'
+    assert len(client.calls[-1][1]['frames'])==3
+    config['jev_images']['enabled']=False;config['jev']['model']='typesafe/jev-1.13'
+    judge.run({'W00':{'measured_actions':[]}},tmp_path,config=config,client=client)
+    assert len(client.calls)==4
+
+
+def test_description_selects_box_with_highest_iou_after_presence(tmp_path,monkeypatch):
+    p=poses(1);p[0,0,:,0]=np.linspace(.1,.3,33);p[0,1]=p[0,0];p[0,1,:,0]+=.5
+    class Client:
+        def __init__(self):self.calls=0
+        def decide(self,state,questions,*a,**kw):
+            self.calls+=1
+            if self.calls==1:
+                return {'raw':{'answers':{'present':{'noul':.98}}},'cost':.001}
+            assert questions['person']['type']=='box'
+            return {'raw':{'answers':{'person':{'box':{'left':.6,'right':.8,'top':.1,'bottom':.8}}}},'cost':.001}
+    client=Client();data={'fps':30,'width':1280,'height':720,'poses_all':p}
+    monkeypatch.setattr(jev_images,'read_frame',lambda *a:np.ones((720,1280,3),np.uint8))
+    assert target_desc.select(tmp_path/'clip',data,'right person',0,tmp_path,load_config(),client)==(2,0.)
+    assert client.calls==2
+    assert json.loads((tmp_path/'selection.json').read_text())['cost']==.002
+
+
+def test_upper_body_crop_excludes_other_person_pixels():
+    image=np.zeros((720,1280,3),np.uint8);image[:,:640,1]=255;image[:,640:,2]=255
+    pose=np.zeros((33,4));pose[:,0]=.2;pose[:,1]=.3;pose[:,3]=1
+    pose[[11,23],0]=.1;pose[[12,24],0]=.3;pose[[23,24],1]=.8
+    output,box=jev_images.crop_target(image,pose,np.full((2,21,3),np.nan),load_config()['jev_images'])
+    assert box[2]<640 and np.max(output[:,:,2])==0 and np.max(output[:,:,1])==255
+
+
+def test_experiment_never_publishes_incomplete_image_group(tmp_path):
+    import runpy
+    module=runpy.run_path('scripts/m8_experiments.py')
+    with pytest.raises(ValueError,match='incomplete'):
+        module['render_tim'](tmp_path,{'1.14-images':{'W00':{'status':'not_run'}}},{},tmp_path,load_config())
+    assert not (tmp_path/'tim_image_render').exists()
